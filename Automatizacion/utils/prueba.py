@@ -5,7 +5,7 @@ import numpy as np
 
 mp_pose = mp.solutions.pose
 
-interpreter = tf.lite.Interpreter("../models/pose_landmark_lite_fp16.tflite")
+interpreter = tf.lite.Interpreter("../models/pose_landmark_lite.tflite")
 interpreter.allocate_tensors()
 
 img = cv2.imread('persona.PNG')
