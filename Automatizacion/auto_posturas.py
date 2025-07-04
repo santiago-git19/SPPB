@@ -69,7 +69,7 @@ class BalanceTest:
         posturas = ["side-by-side", "semi-tandem", "tandem"]
         results = []
         for idx, posture in enumerate(posturas, start=1):
-            #INICIO DE LA POSTURA
+            # Inicio de la postura
             input(f"Presiona ENTER para iniciar '{posture}' (tienes {duration}s)...")
             # CÓDIGO DE ESPERA DEL INICIO
             print(f"Iniciando '{posture}'...")
@@ -118,7 +118,7 @@ class BalanceTest:
                 'posture': posture,
                 'aprobado': aprobado or elapsed >= duration
             }
-            # serializar .npy
+            # serializar .npy --> POR MIRAR SI VOY A GUARDAR LOS KEYPOINTS
             filename = f"cam{camera_id}_{posture}.npy"
             np.save(os.path.join(self.output_base, filename), salida)
             results.append(salida)
@@ -126,38 +126,38 @@ class BalanceTest:
             if not aprobado: break
         return results
 
-    def fase_marcha(self, cap):
+    def fase_marcha(self, cap): # CREO QUE NO HARÁ FALTA UN ALGORITMO DE DETECCIÓN DE CAMINATA, SÓLO TIENE QUE DETECTAR EL INICIO Y EL FIN
         print("Test de velocidad de la marcha (4m): se realizarán 2 intentos, se guarda el mejor tiempo.")
         walk_times = []
         for intento in range(2):
             input(f"Presiona ENTER para iniciar el intento {intento+1} de la marcha de 4m...")
-            walk_start = None
-            walk_end = None
+            # CÓDIGO DE ESPERA DEL INICIO
+
+            walk_start = None # Tiempo de inicio del intento
+            walk_end = None # Tiempo de finalización del intento
+            distanciaTotal = 4.0  # metros
+            distanciaRecorrida = 0.0  # metros
+
             cap.set(cv2.CAP_PROP_POS_FRAMES, 0)  # Reiniciar video si es necesario
-            while cap.isOpened():
+
+            while cap.isOpened() and distanciaRecorrida < distanciaTotal:
                 ret, frame = cap.read()
                 if not ret: break
                 kps = self._process_frame(frame)
-                # Detectar inicio: cuando se detecta movimiento hacia adelante (puedes mejorar con lógica de kps)
-                if walk_start is None and kps is not None:
-                    walk_start = time.time()
-                # Detectar llegada: cuando la cadera (MidHip) supera cierto umbral en el eje X (simula línea de meta)
-                if walk_start and walk_end is None and kps is not None:
-                    # Suponemos que la cámara está lateral y el eje X crece hacia la meta
-                    if kps[8][0] > frame.shape[1] * 0.85:  # 85% del ancho del frame
-                        walk_end = time.time()
-                        break
-                # Si la persona desaparece, termina intento
-                if walk_start and walk_end is None and kps is None:
-                    walk_end = time.time()
-                    break
-            if walk_start and walk_end:
+                # LÓGICA DE DETECCIÓN DE CAMINATA
+                # NO INICIAR HASTA QUE SE DETECTE QUE SE HA INICIADO LA CAMINATA
+                # SE PODRÍA CALCULAR DISTANCIA RECORRIDA POR LA CADERA (MidHip) O POR LOS PIES (Ankle), USANDO CÁMARA LATERAL
+                # TENER EN QUE LA PERSONA PUEDE DESAPARECER DEL FRAME
+            
+            
+            if walk_start and walk_end: # Si se detectó el inicio y fin de la caminata
                 walk_time = walk_end - walk_start
                 walk_times.append(walk_time)
                 print(f"Intento {intento+1}: {walk_time:.2f} segundos")
             else:
                 print(f"Intento {intento+1}: No se pudo medir correctamente.")
-        if walk_times:
+        # determinar el mejor tiempo
+        if walk_times: # hay tiempos registrados
             best_walk_time = min(walk_times)
             return {'test': 'walk', 'best_time': best_walk_time, 'all_times': walk_times}
         else:
