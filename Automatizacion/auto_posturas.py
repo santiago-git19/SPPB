@@ -55,7 +55,7 @@ class BalanceTest:
         if not cap.isOpened():
             raise FileNotFoundError(f"No se pudo abrir {video_path}")
         results = []
-        # Fase 1
+        # Fase 1: TEST DE EQUILIBRIO (3 POSTURAS, 30 SEGUNDOS CADA UNA)
         results += self.fase_equilibrio(cap, camera_id, duration, cumple_prueba)
         # Fase 2: TEST DE LA VELOCIDAD DE LA MARCAH (4 METROS, 2 INTENTOS)
         results.append(self.fase_marcha(cap))
@@ -68,6 +68,8 @@ class BalanceTest:
         print("Iniciando Test de Equilibrio...")
         posturas = ["side-by-side", "semi-tandem", "tandem"]
         results = []
+        aprobado = [False, False, False]
+        tandem_time = 0.0
         for idx, posture in enumerate(posturas, start=1):
             # Inicio de la postura
             input(f"Presiona ENTER para iniciar '{posture}' (tienes {duration}s)...")
@@ -80,15 +82,11 @@ class BalanceTest:
             last_sample = start_test_time
             tiempo_continuo = 0.0 # tiempo acumulado en postura
             #posture_kps = []
-            aprobado = False # True si la postura se mantiene el tiempo requerido
+            posture_aprobado = False # True si la postura se mantiene el tiempo requerido
 
-            while not aprobado:
+            while not posture_aprobado and elapsed < duration:
                 now = time.time()
                 elapsed = now - start_test_time
-
-                # chequear si se ha alcanzado el tiempo máximo de la prueba
-                if elapsed >= duration:
-                    break
 
                 # muestra cada 'interval' segundos
                 if now - last_sample >= self.interval:
@@ -103,27 +101,52 @@ class BalanceTest:
                     if cumple_prueba(posture, kps): #Comprueba si está haciendo bien la postura
                         tiempo_continuo += now - last_sample
                         if tiempo_continuo >= duration:
-                            aprobado = True
+                            posture_aprobado = True
                             print(f"Postura '{posture}' aprobada antes de tiempo.")
                             break
                     else:
                         tiempo_continuo = 0.0
 
                     last_sample = now
-
-
-            # fin de la postura
-            # guardar datos
+            # Guardar resultado de la postura
+            aprobado[idx-1] = posture_aprobado
+            # Guardar el tiempo mantenido en tandem
+            if posture == "tandem":
+                tandem_time = tiempo_continuo
             salida = {
                 'posture': posture,
-                'aprobado': aprobado or elapsed >= duration
+                'aprobado': aprobado[idx-1],
+                'tiempo_mantenido': tiempo_continuo if posture == "tandem" else None
             }
             # serializar .npy --> POR MIRAR SI VOY A GUARDAR LOS KEYPOINTS
             filename = f"cam{camera_id}_{posture}.npy"
             np.save(os.path.join(self.output_base, filename), salida)
             results.append(salida)
             print(f"'{posture}' completada. Resultado: {salida['aprobado']}")
-            if not aprobado: break
+            if not aprobado[idx-1]:
+                break  # Si falla una postura, termina la fase
+
+        # Asignar puntuación SPPB según el flujo del test
+        # Si no supera la primera: 0 puntos
+        # Si supera la primera pero no la segunda: 1 punto
+        # Si supera la segunda pero no la tercera: 2 puntos
+        # Si supera la tercera:
+        #   - 10s: 2 puntos
+        #   - 3-9.99s: 1 punto
+        #   - <3s: 0 puntos
+        score = 0
+        if aprobado[0]:
+            score = 1
+            if aprobado[1]:
+                score += 1
+                if aprobado[2]:
+                    if tandem_time >= 10:
+                        score += 2
+                    elif 3 <= tandem_time < 10:
+                        score += 1
+                    else:
+                        score += 0
+        results.append({'test': 'balance', 'score': score, 'tandem_time': tandem_time})
         return results
 
     def fase_marcha(self, cap): # CREO QUE NO HARÁ FALTA UN MODELO DE DETECCIÓN DE CAMINATA, SÓLO TIENE QUE DETECTAR EL INICIO Y EL FIN
@@ -156,12 +179,23 @@ class BalanceTest:
                 print(f"Intento {intento+1}: {walk_time:.2f} segundos")
             else:
                 print(f"Intento {intento+1}: No se pudo medir correctamente.")
-        # determinar el mejor tiempo
-        if walk_times: # hay tiempos registrados
+        # determinar el mejor tiempo y asignar puntuación SPPB
+        result = {'test': 'walk', 'best_time': None, 'all_times': walk_times, 'score': 0}
+        if walk_times:
             best_walk_time = min(walk_times)
-            return {'test': 'walk', 'best_time': best_walk_time, 'all_times': walk_times}
+            result['best_time'] = best_walk_time
+            # Asignar puntuación según protocolo SPPB
+            if best_walk_time < 4.82:
+                result['score'] = 4
+            elif best_walk_time < 6.21:
+                result['score'] = 3
+            elif best_walk_time < 8.71:
+                result['score'] = 2
+            elif best_walk_time >= 8.71:
+                result['score'] = 1
         else:
-            return {'test': 'walk', 'best_time': None, 'all_times': walk_times}
+            result['score'] = 0  # No puede realizarlo
+        return result
 
     def fase_silla(self, cap):
         print("Test de levantarse de la silla: Pre-test (cruzar brazos y levantarse una vez)")
