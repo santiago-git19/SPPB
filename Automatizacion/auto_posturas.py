@@ -244,6 +244,26 @@ class BalanceTest:
             else:
                 chair_result['score'] = 0
         return chair_result
+    
+    # POSIBLE IMPLEMETACIÓN DE BRAZOS CRUZADOS
+    def brazos_cruzados(kps, frame):
+        # Keypoints: 4 = muñeca derecha, 7 = muñeca izquierda, 1 = pecho
+        if kps is None:
+            return False
+        wrist_right = kps[4]
+        wrist_left = kps[7]
+        chest = kps[1]
+        # Distancia entre muñecas y pecho
+        dist_right = np.linalg.norm(wrist_right[:2] - chest[:2])
+        dist_left = np.linalg.norm(wrist_left[:2] - chest[:2])
+        # Distancia entre muñecas
+        dist_wrists = np.linalg.norm(wrist_right[:2] - wrist_left[:2])
+        # Umbrales heurísticos (ajustar según resolución)
+        threshold_chest = frame.shape[0] * 0.15
+        threshold_wrists = frame.shape[0] * 0.20
+        return (dist_right < threshold_chest and
+                dist_left < threshold_chest and
+                dist_wrists < threshold_wrists)
 
 # Ejemplo de uso
 if __name__ == "__main__":
