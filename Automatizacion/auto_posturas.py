@@ -11,11 +11,67 @@ models_path = "/home/work/openpose/models/"
 output_base_default = "/home/work/gonartrosis/data/processed/SPPB_keypoints"
 
 class BalanceTest:
-    """
-    Ejecuta la Fase 1 (Test de Equilibrio) del SPPB.
-    El usuario inicia cada postura pulsando ENTER, y tiene 'duration' segundos para mantenerla.
-    Se muestrea al ritmo 'fps' y se utiliza 'cumple_prueba' para validar la postura.
-    """
+    # --- MÉTODOS AUXILIARES DE PUNTUACIÓN ---
+    @staticmethod
+    def puntuacion_equilibrio(aprobado, tandem_time):
+        """
+        Calcula la puntuación SPPB para la fase de equilibrio según el flujo oficial.
+        """
+        puntuacion = 0
+
+        if aprobado[0]: puntuacion = 1
+        if aprobado[1]: puntuacion += 1
+        if aprobado[2]:
+            # Si supera la tandem, depende del tiempo mantenido
+            if tandem_time >= 10:
+                puntuacion += 2
+            elif 3 <= tandem_time < 10:
+                puntuacion += 1
+            else:
+                puntuacion += 0
+        
+        return puntuacion
+
+    @staticmethod
+    def puntuacion_marcha(best_walk_time):
+        """
+        Calcula la puntuación SPPB para la fase de marcha.
+        """
+        puntuacion = 0
+
+        if best_walk_time is None:
+            puntuacion = 0
+        if best_walk_time < 4.82:
+            puntuacion = 4
+        elif best_walk_time < 6.21:
+            puntuacion = 3
+        elif best_walk_time < 8.71:
+            puntuacion = 2
+        elif best_walk_time >= 8.71:
+            puntuacion = 1
+
+        return puntuacion
+
+    @staticmethod
+    def puntuacion_silla(total_time):
+        """
+        Calcula la puntuación SPPB para la fase de levantarse de la silla.
+        """
+        puntuacion = 0
+
+        if total_time is None:
+            puntuacion = 0
+        if total_time <= 11.19:
+            puntuacion = 4
+        elif total_time <= 13.69:
+            puntuacion = 3
+        elif total_time <= 16.69:
+            puntuacion = 2
+        elif total_time <= 60:
+            puntuacion = 1
+        
+        return puntuacion
+   
     def __init__(self, model_folder: str = models_path,
                  output_base: str = output_base_default,
                  fps: float = 5.0):
@@ -63,6 +119,12 @@ class BalanceTest:
         results.append(self.fase_silla(cap))
         cap.release()
         return results
+
+    """
+    Ejecuta la Fase 1 (Test de Equilibrio) del SPPB.
+    El usuario inicia cada postura pulsando ENTER, y tiene 'duration' segundos para mantenerla.
+    Se muestrea al ritmo 'fps' y se utiliza 'cumple_prueba' para validar la postura.
+    """
 
     def fase_equilibrio(self, cap, camera_id, duration, cumple_prueba):
         print("Iniciando Test de Equilibrio...")
@@ -124,28 +186,9 @@ class BalanceTest:
             results.append(salida)
             print(f"'{posture}' completada. Resultado: {salida['aprobado']}")
             if not aprobado[idx-1]:
-                break  # Si falla una postura, termina la fase
+                break
 
-        # Asignar puntuación SPPB según el flujo del test
-        # Si no supera la primera: 0 puntos
-        # Si supera la primera pero no la segunda: 1 punto
-        # Si supera la segunda pero no la tercera: 2 puntos
-        # Si supera la tercera:
-        #   - 10s: 2 puntos
-        #   - 3-9.99s: 1 punto
-        #   - <3s: 0 puntos
-        score = 0
-        if aprobado[0]:
-            score = 1
-            if aprobado[1]:
-                score += 1
-                if aprobado[2]:
-                    if tandem_time >= 10:
-                        score += 2
-                    elif 3 <= tandem_time < 10:
-                        score += 1
-                    else:
-                        score += 0
+        score = self.puntuacion_equilibrio(aprobado, tandem_time)
         results.append({'test': 'balance', 'score': score, 'tandem_time': tandem_time})
         return results
 
@@ -223,7 +266,7 @@ class BalanceTest:
             if not ret: break
             current = time.time()
 
-            # Procesa el fram si el intervalo ha pasado o es el primer frame
+            # Procesa el frame si el intervalo ha pasado o es el primer frame
             if not hasattr(self, '_last') or (current - self._last) >= interval:
                 kps = self._process_frame(frame)
 
@@ -264,19 +307,7 @@ class BalanceTest:
             print(f"Tiempo total para 5 repeticiones: {total_time:.2f} segundos")
         chair_result['times'] = chair_times
         chair_result['total_time'] = total_time
-
-        # Asignar puntuación según protocolo SPPB
-        if total_time is not None:
-            if total_time <= 11.19:
-                chair_result['score'] = 4
-            elif total_time <= 13.69:
-                chair_result['score'] = 3
-            elif total_time <= 16.69:
-                chair_result['score'] = 2
-            elif total_time <= 60:
-                chair_result['score'] = 1
-            else:
-                chair_result['score'] = 0
+        chair_result['score'] = self.puntuacion_silla(total_time)
         return chair_result
     
     # POSIBLE IMPLEMETACIÓN DE BRAZOS CRUZADOS
