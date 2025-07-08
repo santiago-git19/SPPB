@@ -6,7 +6,24 @@ class BalancePhase(PhaseBase):
     def __init__(self, openpose, config):
         super().__init__(openpose, config)
 
+    def reset_test(self):
+        """
+        Reinicia el estado específico de la prueba Balance.
+        """
+        super().reset_test()
+        # Reiniciar cualquier estado específico de balance
+        print("Estado de Balance reiniciado.")
+
     def run(self, cap, camera_id, duration):
+        """
+        Método principal que ejecuta la prueba con capacidad de reinicio.
+        """
+        return self.run_with_restart(cap, camera_id, duration)
+
+    def _run_phase(self, cap, camera_id, duration):
+        """
+        Implementación específica de la fase Balance.
+        """
         self.print_instructions(
             "Test de Equilibrio",
             [
@@ -24,54 +41,70 @@ class BalancePhase(PhaseBase):
         tandem_time = 0.0
         
         for idx, posture in enumerate(posturas, start=1):
-            print(f"\n--- Postura {idx}: {posture} ---")
-            print("Instrucciones:")
-            if posture == "side-by-side":
-                print("- Coloque los pies juntos, uno al lado del otro")
-            elif posture == "semi-tandem":
-                print("- Coloque un pie ligeramente adelantado, con el talón del pie delantero")
-                print("  junto a la mitad del pie trasero")
-            else:  # tandem
-                print("- Coloque un pie directamente delante del otro")
-                print("  el talón tocando la punta del pie trasero")
+            self.print_instructions(
+                f"Postura {idx}: {posture}",
+                [
+                    "Colóquese en la posición indicada",
+                    "Mantenga la postura durante el tiempo requerido"
+                ]
+            )
             
-            self.wait_for_ready(f"Presione ENTER cuando esté en posición para la postura '{posture}'...")
+            action = self.wait_for_ready_with_restart(f"Presione ENTER cuando esté en posición para la postura '{posture}'...")
             
-            # reiniciar captura de vídeo
-            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)  # Reiniciar video si es necesario
-            start_test_time = time.time() # reiniciar tiempo de prueba
-            last_sample = start_test_time
-            tiempo_continuo = 0.0 # tiempo acumulado en postura
-            posture_aprobado = False # True si la postura se mantiene el tiempo requerido
+            if action == 'restart':
+                raise Exception("Reinicio solicitado por el usuario")
+            elif action == 'skip':
+                return self.create_skipped_result('balance', 'user_choice')
+            elif action == 'exit' or action == 'emergency_stop':
+                return None
+            
+            # Ejecutar la postura con monitoreo de interrupciones
+            try:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)  # Reiniciar video si es necesario
+                start_test_time = time.time() # reiniciar tiempo de prueba
+                last_sample = start_test_time
+                tiempo_continuo = 0.0 # tiempo acumulado en postura
+                posture_aprobado = False # True si la postura se mantiene el tiempo requerido
+                emergency_shown = False  # Para mostrar mensaje de emergencia solo una vez
+                mejor_tiempo_continuo = 0.0  # Inicializar el mejor tiempo continuo
 
-            while not posture_aprobado and elapsed < duration:
-                now = time.time()
-                elapsed = now - start_test_time
+                while not posture_aprobado and (time.time() - start_test_time) < duration:
+                    now = time.time()
 
-                # muestra cada 'interval' segundos
-                if now - last_sample >= self.interval:
-                    ret, frame = cap.read()
-                    if not ret:
-                        print("Vídeo terminó prematuramente.")
-                        break
-                    kps = self.openpose._process_frame(frame) # REVISAR SI FUNCIONA
+                    # Mostrar información de emergencia solo una vez
+                    if not emergency_shown:
+                        self.monitor_emergency_stop(f"Durante la postura {posture}, presione Ctrl+C si necesita parar por emergencia")
+                        emergency_shown = True
 
-                    # evaluar continuidad de la prueba
-                    if self.cumple_prueba(posture, kps): #Comprueba si está haciendo bien la postura
-                        tiempo_continuo += now - last_sample
-                        if tiempo_continuo >= duration:
-                            posture_aprobado = True
-                            print(f"Postura '{posture}' aprobada antes de tiempo.")
+                    # muestra cada 'interval' segundos
+                    if now - last_sample >= self.interval:
+                        ret, frame = cap.read()
+                        if not ret:
+                            print("Vídeo terminó prematuramente.")
                             break
-                    else:
-                        tiempo_continuo = 0.0
+                        kps = self.openpose._process_frame(frame) # REVISAR SI FUNCIONA
 
-                    last_sample = now
+                        # evaluar continuidad de la prueba
+                        if self.cumple_prueba(posture, kps): # Comprueba si está haciendo bien la postura
+                            tiempo_continuo += now - last_sample
+                            mejor_tiempo_continuo = max(mejor_tiempo_continuo, tiempo_continuo)  # Actualizar el mejor tiempo
+                            if tiempo_continuo >= 10:
+                                posture_aprobado = True
+                                print(f"Postura '{posture}' aprobada antes de tiempo.")
+                                break
+                        else:
+                            tiempo_continuo = 0.0
+
+                        last_sample = now
+                        
+            except KeyboardInterrupt:
+                print(f"\n🚨 PARADA DE EMERGENCIA durante la postura {posture}")
+                raise  # Re-lanzar para que sea manejada por run_with_restart
             # Guardar resultado de la postura
             aprobado[idx-1] = posture_aprobado
-            # Guardar el tiempo mantenido en tandem
+            # Guardar el mejor tiempo mantenido en tandem
             if posture == "tandem":
-                tandem_time = tiempo_continuo
+                tandem_time = mejor_tiempo_continuo
             salida = {
                 'posture': posture,
                 'aprobado': aprobado[idx-1],

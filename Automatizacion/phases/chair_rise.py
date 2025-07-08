@@ -7,17 +7,49 @@ class ChairRisePhase(PhaseBase):
     def __init__(self, openpose, config):
         super().__init__(openpose, config)
 
-    def wait_for_ready(self, message="Presione ENTER cuando esté listo para comenzar..."):
+    def reset_test(self):
         """
-        Espera a que el usuario presione ENTER para indicar que está listo para comenzar la prueba.
-        
-        Args:
-            message (str): Mensaje que se mostrará al usuario
+        Reinicia el estado específico de la prueba Chair Rise.
         """
-        print("\n" + message)
-        input("") # Espera a que se presione ENTER
-        print("¡Comenzando!")
+        super().reset_test()
+        # Reiniciar cualquier estado específico de chair rise
+        print("Estado de Chair Rise reiniciado.")
 
+    def run(self, cap):
+        """
+        Método principal que ejecuta la prueba con capacidad de reinicio.
+        """
+        return self.run_with_restart(cap)
+
+    def _run_phase(self, cap):
+        """
+        Implementación específica de la fase Chair Rise con manejo de emergencias.
+        """
+        # Parte 1: Pre-test
+        puede_levantar = self.pre_test(cap)
+        
+        if puede_levantar is None:  # Saltada o cancelada
+            return self.create_skipped_result('chair', 'pretest_skipped')
+        
+        chair_result = {
+            'test': 'chair',
+            'pretest': puede_levantar,
+            'total_time': None,
+            'score': 0
+        }
+        
+        if not puede_levantar:
+            print("No puede realizarlo. Puntuación: 0 puntos.")
+            return chair_result
+            
+        # Parte 2: Test principal (5 repeticiones)
+        main_result = self.test_principal(cap)
+        
+        if main_result is None:  # Saltada o cancelada
+            return self.create_skipped_result('chair', 'main_test_skipped')
+        
+        return main_result
+    
     def pre_test(self, cap):
         """
         Primera parte: Pre-test
@@ -32,7 +64,14 @@ class ChairRisePhase(PhaseBase):
             ]
         )
         
-        self.wait_for_ready("Presione ENTER cuando esté en posición y listo para intentar levantarse...")
+        action = self.wait_for_ready_with_restart("Presione ENTER cuando esté en posición y listo para intentar levantarse...")
+        
+        if action == 'restart':
+            raise Exception("Reinicio solicitado por el usuario")
+        elif action == 'skip':
+            return None  # Indicar que se saltó la prueba
+        elif action == 'exit' or action == 'emergency_stop':
+            return None
         
         # LÓGICA DE DETECCIÓN DE LEVANTARSE Y SENTARSE EN LA SILLA
         puede_levantar = input("¿El sujeto puede levantarse de la silla sin ayuda? (s/n): ").strip().lower() == 's'
@@ -53,7 +92,14 @@ class ChairRisePhase(PhaseBase):
             ]
         )
         
-        self.wait_for_ready("Presione ENTER cuando esté en posición inicial (sentado con brazos cruzados)...")
+        action = self.wait_for_ready_with_restart("Presione ENTER cuando esté en posición inicial (sentado con brazos cruzados)...")
+        
+        if action == 'restart':
+            raise Exception("Reinicio solicitado por el usuario")
+        elif action == 'skip':
+            return None  # Indicar que se saltó la prueba
+        elif action == 'exit' or action == 'emergency_stop':
+            return None
         
         chair_result = {'test': 'chair', 'pretest': True, 'times': [], 'total_time': None, 'score': 0}
 
@@ -63,23 +109,29 @@ class ChairRisePhase(PhaseBase):
         chair_times = []
         total_start = None
         rep_start = None  # Inicializar rep_start
+        emergency_shown = False  # Para mostrar mensaje de emergencia solo una vez
         
         cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
         
-        while cap.isOpened() and chair_count < CHAIR_RISES:
-            ret, frame = cap.read()
-            if not ret: break
-            current = time.time()
+        try:
+            while cap.isOpened() and chair_count < CHAIR_RISES:
+                ret, frame = cap.read()
+                if not ret: break
+                current = time.time()
 
-            # Procesa el frame si el intervalo ha pasado o es el primer frame
-            if not hasattr(self, '_last') or (current - self._last) >= self.interval:  # Usar self.interval
-                kps = self.openpose.process_frame(frame)
+                # Mostrar información de emergencia solo una vez
+                if not emergency_shown:
+                    self.monitor_emergency_stop("Durante la prueba, presione Ctrl+C si necesita parar por emergencia")
+                    emergency_shown = True
 
+                # Procesa el frame si el intervalo ha pasado o es el primer frame
+                if not hasattr(self, '_last') or (current - self._last) >= self.interval:  # Usar self.interval
+                    kps = self.openpose.process_frame(frame)
 
-                # LÓGICA DE DETECCIÓN DE LEVANTARSE Y SENTARSE EN LA SILLA
-                # HAY QUE TENER EN CUENTA QUE TIENE QUE TENER LOS BRAZOS CRUZADOS
-                # SE PODRÍA CALCULAR USANDO LA CADERA (MidHip)
-                # TENER EN CUENTA QUE LA PERSONA PUEDE DESAPARECER DEL FRAME
+                    # LÓGICA DE DETECCIÓN DE LEVANTARSE Y SENTARSE EN LA SILLA
+                    # HAY QUE TENER EN CUENTA QUE TIENE QUE TENER LOS BRAZOS CRUZADOS
+                    # SE PODRÍA CALCULAR USANDO LA CADERA (MidHip)
+                    # TENER EN CUENTA QUE LA PERSONA PUEDE DESAPARECER DEL FRAME
 
                 # Validar que tenemos keypoints válidos
                 if kps is not None and len(kps) >= 9:  # Asegurar que tenemos al menos hasta MidHip
@@ -106,6 +158,10 @@ class ChairRisePhase(PhaseBase):
                         
                     self._last = current
 
+        except KeyboardInterrupt:
+            print("\n🚨 PARADA DE EMERGENCIA durante Chair Rise")
+            raise  # Re-lanzar para que sea manejada por run_with_restart
+
         # Finalizar el test
         total_time = None
         if total_start and chair_count == CHAIR_RISES:
@@ -115,24 +171,7 @@ class ChairRisePhase(PhaseBase):
         chair_result['total_time'] = total_time
         chair_result['score'] = self.score(total_time)
         return chair_result
-
-    def run(self, cap):
-        # Parte 1: Pre-test
-        puede_levantar = self.pre_test(cap)
-        chair_result = {
-            'test': 'chair',
-            'pretest': puede_levantar,
-            'total_time': None,
-            'score': 0
-        }
-        
-        if not puede_levantar:
-            print("No puede realizarlo. Puntuación: 0 puntos.")
-            return chair_result
             
-        # Parte 2: Test principal (5 repeticiones)
-        return self.test_principal(cap)
- 
 
     def verificar_brazos_cruzados(self, kps, frame):
         """Verifica si los brazos están cruzados sobre el pecho"""

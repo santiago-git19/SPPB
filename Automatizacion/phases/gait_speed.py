@@ -5,7 +5,24 @@ class GaitSpeedPhase(PhaseBase):
     def __init__(self, openpose, config):
         super().__init__(openpose, config)
 
+    def reset_test(self):
+        """
+        Reinicia el estado específico de la prueba Gait Speed.
+        """
+        super().reset_test()
+        # Reiniciar cualquier estado específico de gait speed
+        print("Estado de Gait Speed reiniciado.")
+
     def run(self, cap, camera_id):
+        """
+        Método principal que ejecuta la prueba con capacidad de reinicio.
+        """
+        return self.run_with_restart(cap, camera_id)
+
+    def _run_phase(self, cap, camera_id):
+        """
+        Implementación específica de la fase Gait Speed.
+        """
         self.print_instructions(
             "Test de Velocidad de la Marcha",
             [
@@ -25,24 +42,43 @@ class GaitSpeedPhase(PhaseBase):
                 ]
             )
             
-            self.wait_for_ready(f"Presione ENTER cuando esté listo para comenzar el intento {intento+1}...")
+            action = self.wait_for_ready_with_restart(f"Presione ENTER cuando esté listo para comenzar el intento {intento+1}...")
             
-            walk_start = None # Tiempo de inicio del intento
-            walk_end = None # Tiempo de finalización del intento
-            distanciaTotal = 4.0  # metros
-            distanciaRecorrida = 0.0  # metros
-
-            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)  # Reiniciar video si es necesario
-
-            while cap.isOpened() and distanciaRecorrida < distanciaTotal:
-                ret, frame = cap.read()
-                if not ret: break
-                kps = self.openpose.process_frame(frame)
-                # LÓGICA DE DETECCIÓN DE CAMINATA
-                # NO INICIAR HASTA QUE SE DETECTE QUE SE HA INICIADO LA CAMINATA
-                # SE PODRÍA CALCULAR DISTANCIA RECORRIDA POR LA CADERA (MidHip) O POR LOS PIES (Ankle), USANDO CÁMARA LATERAL
-                # TENER EN QUE CUENTA LA PERSONA PUEDE DESAPARECER DEL FRAME
+            if action == 'restart':
+                raise Exception("Reinicio solicitado por el usuario")
+            elif action == 'skip':
+                return self.create_skipped_result('walk', 'user_choice')
+            elif action == 'exit' or action == 'emergency_stop':
+                return None
             
+            # Ejecutar el intento con monitoreo de interrupciones
+            try:
+                walk_start = None # Tiempo de inicio del intento
+                walk_end = None # Tiempo de finalización del intento
+                distanciaTotal = 4.0  # metros
+                distanciaRecorrida = 0.0  # metros
+                emergency_shown = False  # Para mostrar mensaje de emergencia solo una vez
+
+                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)  # Reiniciar video si es necesario
+
+                while cap.isOpened() and distanciaRecorrida < distanciaTotal:
+                    ret, frame = cap.read()
+                    if not ret: break
+                    
+                    # Mostrar información de emergencia solo una vez
+                    if not emergency_shown:
+                        self.monitor_emergency_stop("Durante la marcha, presione Ctrl+C si necesita parar por emergencia")
+                        emergency_shown = True
+                    
+                    kps = self.openpose.process_frame(frame)
+                    # LÓGICA DE DETECCIÓN DE CAMINATA
+                    # NO INICIAR HASTA QUE SE DETECTE QUE SE HA INICIADO LA CAMINATA
+                    # SE PODRÍA CALCULAR DISTANCIA RECORRIDA POR LA CADERA (MidHip) O POR LOS PIES (Ankle), USANDO CÁMARA LATERAL
+                    # TENER EN QUE CUENTA LA PERSONA PUEDE DESAPARECER DEL FRAME
+                    
+            except KeyboardInterrupt:
+                print("\n🚨 PARADA DE EMERGENCIA durante Gait Speed")
+                raise  # Re-lanzar para que sea manejada por run_with_restart
             
             if walk_start and walk_end: # Si se detectó el inicio y fin de la caminata
                 walk_time = walk_end - walk_start
@@ -59,6 +95,7 @@ class GaitSpeedPhase(PhaseBase):
         else:
             result['score'] = 0  # No puede realizarlo
         return result
+        
 
     @staticmethod
     def score(best_walk_time):

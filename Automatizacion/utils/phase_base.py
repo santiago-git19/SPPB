@@ -37,3 +37,191 @@ class PhaseBase:
             print("Instrucciones:")
             for instruction in instructions:
                 print(f"- {instruction}")
+    
+    def reset_test(self):
+        """
+        Reinicia el estado de la prueba para permitir volver a ejecutarla desde el principio.
+        Las subclases deben sobrescribir este método para reiniciar su estado específico.
+        """
+        print("\n⚠️  Reiniciando la prueba...")
+        # Reiniciar estado básico común
+        if hasattr(self, '_last'):
+            delattr(self, '_last')
+        print("Estado base reiniciado.")
+
+    def wait_for_ready_with_restart(self, message="Presione ENTER cuando esté listo para comenzar..."):
+        """
+        Espera a que el usuario esté listo, pero también permite reiniciar, salir o saltar la prueba.
+        
+        Args:
+            message (str): Mensaje que se mostrará al usuario
+        
+        Returns:
+            str: 'continue' para continuar, 'restart' para reiniciar, 'exit' para salir, 'skip' para saltar
+        """
+        print("\n" + message)
+        print("🚨 Opciones disponibles:")
+        print("  - Presione ENTER para CONTINUAR con la prueba")
+        print("  - Escriba 'r' + ENTER para REINICIAR la prueba")
+        print("  - Escriba 's' + ENTER para SALTAR esta prueba (persona no capacitada)")
+        print("  - Escriba 'q' + ENTER para SALIR completamente")
+        print("  - Ctrl+C para CANCELAR INMEDIATAMENTE (emergencia)")
+        
+        try:
+            user_input = input(">>> ").strip().lower()
+            
+            if user_input == 'r':
+                print("🔄 REINICIANDO la prueba...")
+                return 'restart'
+            elif user_input == 's':
+                print("⏭️ SALTANDO esta prueba...")
+                return 'skip'
+            elif user_input == 'q':
+                print("🚪 SALIENDO del sistema...")
+                return 'exit'
+            else:
+                print("✅ COMENZANDO la prueba...")
+                return 'continue'
+        except KeyboardInterrupt:
+            print("\n🚨 CANCELACIÓN DE EMERGENCIA activada")
+            return 'emergency_stop'
+
+    def ask_for_restart(self, error_message=""):
+        """
+        Pregunta al usuario qué hacer después de un error, con opciones de emergencia.
+        
+        Args:
+            error_message (str): Mensaje de error opcional
+        
+        Returns:
+            str: 'restart', 'skip', 'exit' según la decisión del usuario
+        """
+        if error_message:
+            print(f"\n❌ ERROR CRÍTICO: {error_message}")
+        
+        print("\n🚨 OPCIONES DE EMERGENCIA:")
+        print("1. REINICIAR la prueba (volver a intentar)")
+        print("2. SALTAR esta prueba (persona no capacitada)")
+        print("3. SALIR completamente del sistema")
+        
+        while True:
+            try:
+                choice = input("Seleccione una opción (1/2/3): ").strip()
+                if choice == '1':
+                    print("🔄 REINICIANDO la prueba...")
+                    return 'restart'
+                elif choice == '2':
+                    print("⏭️ SALTANDO esta prueba...")
+                    return 'skip'
+                elif choice == '3':
+                    print("🚪 SALIENDO del sistema...")
+                    return 'exit'
+                else:
+                    print("❌ Opción no válida. Seleccione 1, 2 o 3.")
+            except KeyboardInterrupt:
+                print("\n🚨 CANCELACIÓN DE EMERGENCIA - Saliendo del sistema...")
+                return 'exit'
+
+    def run_with_restart(self, *args, **kwargs):
+        """
+        Ejecuta la prueba con capacidad de reinicio automático y manejo de emergencias.
+        Las subclases deben implementar el método _run_phase.
+        
+        Returns:
+            dict: Resultado de la prueba, None si se canceló, o dict con 'skipped': True si se saltó
+        """
+        max_attempts = 3
+        attempt = 1
+        
+        while attempt <= max_attempts:
+            try:
+                print(f"\n🔄 Intento {attempt} de {max_attempts}")
+                
+                # Ejecutar la fase específica
+                result = self._run_phase(*args, **kwargs)
+                
+                if result is not None:
+                    if isinstance(result, dict) and result.get('skipped', False):
+                        print("⏭️ Prueba saltada por decisión del usuario.")
+                        return result
+                    else:
+                        print("✅ Prueba completada exitosamente.")
+                        return result
+                else:
+                    print("❌ Prueba cancelada por el usuario.")
+                    return None
+                    
+            except KeyboardInterrupt:
+                print("\n🚨 INTERRUPCIÓN DE EMERGENCIA detectada")
+                action = self.ask_for_restart("Interrupción del usuario (Ctrl+C)")
+                
+                if action == 'restart':
+                    self.reset_test()
+                    attempt += 1
+                    continue
+                elif action == 'skip':
+                    return {'skipped': True, 'reason': 'emergency_interrupt'}
+                else:  # exit
+                    return None
+                    
+            except Exception as e:
+                print(f"\n❌ ERROR TÉCNICO: {str(e)}")
+                
+                if attempt < max_attempts:
+                    action = self.ask_for_restart(f"Error técnico: {str(e)}")
+                    
+                    if action == 'restart':
+                        self.reset_test()
+                        attempt += 1
+                        continue
+                    elif action == 'skip':
+                        return {'skipped': True, 'reason': 'technical_error'}
+                    else:  # exit
+                        return None
+                else:
+                    print(f"❌ Se alcanzó el máximo de intentos ({max_attempts}). Terminando prueba.")
+                    action = self.ask_for_restart("Máximo de intentos alcanzado")
+                    
+                    if action == 'skip':
+                        return {'skipped': True, 'reason': 'max_attempts_reached'}
+                    else:
+                        return None
+        
+        return None
+
+    def monitor_emergency_stop(self, message="Presione Ctrl+C para parar la prueba de emergencia"):
+        """
+        Método para mostrar información sobre cómo parar la prueba en caso de emergencia.
+        Debe ser llamado al inicio de bucles largos de procesamiento.
+        """
+        print(f"🚨 {message}")
+        print("   (Esta información se mostrará solo una vez por prueba)")
+
+    def create_skipped_result(self, test_name, reason="user_choice"):
+        """
+        Crea un resultado estándar para una prueba saltada.
+        
+        Args:
+            test_name (str): Nombre de la prueba
+            reason (str): Razón por la cual se saltó la prueba
+        
+        Returns:
+            dict: Resultado estándar para prueba saltada
+        """
+        return {
+            'test': test_name,
+            'skipped': True,
+            'reason': reason,
+            'score': 0,
+            'message': f"Prueba {test_name} saltada: {reason}"
+        }
+
+    def _run_phase(self, *args, **kwargs):
+        """
+        Método abstracto que debe ser implementado por las subclases.
+        Contiene la lógica específica de cada fase.
+        
+        Raises:
+            NotImplementedError: Si no se implementa en la subclase
+        """
+        raise NotImplementedError("Las subclases deben implementar el método _run_phase")
