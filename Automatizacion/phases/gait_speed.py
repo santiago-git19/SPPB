@@ -1,20 +1,32 @@
-class GaitSpeedPhase:
+import cv2
+from ..utils.phase_base import PhaseBase
+
+class GaitSpeedPhase(PhaseBase):
     def __init__(self, openpose, config):
-        self.openpose = openpose
-        self.config = config
-        self.interval = getattr(config, 'fps', 5.0)
-        if self.interval:
-            self.interval = 1.0 / self.interval
-        else:
-            self.interval = 0.2
+        super().__init__(openpose, config)
 
     def run(self, cap, camera_id):
-        print("Test de velocidad de la marcha (4m): se realizarán 2 intentos, se guarda el mejor tiempo.")
+        self.print_instructions(
+            "Test de Velocidad de la Marcha",
+            [
+                "Se realizarán 2 intentos de marcha de 4 metros",
+                "Camine a su ritmo normal, como cuando va por la calle",
+                "Se guardará el mejor tiempo de los dos intentos"
+            ]
+        )
+        
         walk_times = []
         for intento in range(2):
-            input(f"Presiona ENTER para iniciar el intento {intento+1} de la marcha de 4m...")
-            # CÓDIGO DE ESPERA DEL INICIO
-
+            self.print_instructions(
+                f"Intento {intento+1} de 2",
+                [
+                    "Colóquese en la posición inicial de la marca de 4 metros",
+                    "Espere la señal para comenzar"
+                ]
+            )
+            
+            self.wait_for_ready(f"Presione ENTER cuando esté listo para comenzar el intento {intento+1}...")
+            
             walk_start = None # Tiempo de inicio del intento
             walk_end = None # Tiempo de finalización del intento
             distanciaTotal = 4.0  # metros

@@ -13,11 +13,11 @@ class SPPBTest:
         self.gait = GaitSpeedPhase(self.openpose, config)
         self.chair = ChairRisePhase(self.openpose, config)
 
-    def run(self, video_path, camera_id, duration):
+    def run(self, video_path, camera_id):
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
             raise FileNotFoundError(f"No se pudo abrir {video_path}")
-        balance_result = self.balance.run(cap, camera_id, duration)
+        balance_result = self.balance.run(cap, camera_id, self.config.duration)
         gait_result = self.gait.run(cap, camera_id)
         chair_result = self.chair.run(cap, camera_id)
         cap.release()

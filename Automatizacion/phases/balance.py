@@ -1,28 +1,42 @@
 import time
 import cv2
+from ..utils.phase_base import PhaseBase
 
-class BalancePhase:
+class BalancePhase(PhaseBase):
     def __init__(self, openpose, config):
-        self.openpose = openpose
-        self.config = config
-        self.interval = getattr(config, 'fps', 5.0)
-        if self.interval:
-            self.interval = 1.0 / self.interval
-        else:
-            self.interval = 0.2
+        super().__init__(openpose, config)
 
     def run(self, cap, camera_id, duration):
-        print("Iniciando Test de Equilibrio...")
+        self.print_instructions(
+            "Test de Equilibrio",
+            [
+                "Se evaluarán tres posturas diferentes:",
+                "1. Side-by-side (pies juntos)",
+                "2. Semi-tandem (un pie medio adelantado)",
+                "3. Tandem (un pie delante del otro)",
+                f"Cada postura debe mantenerse durante 10 segundos, tendrá un máximo de {duration} segundos para realizar cada prueba.",
+            ]
+        )
+        
         posturas = ["side-by-side", "semi-tandem", "tandem"]
         results = []
         aprobado = [False, False, False]
         tandem_time = 0.0
+        
         for idx, posture in enumerate(posturas, start=1):
-            # Inicio de la postura
-            input(f"Presiona ENTER para iniciar '{posture}' (tienes {duration}s)...")
-            # CÓDIGO DE ESPERA DEL INICIO
-            print(f"Iniciando '{posture}'...")
-
+            print(f"\n--- Postura {idx}: {posture} ---")
+            print("Instrucciones:")
+            if posture == "side-by-side":
+                print("- Coloque los pies juntos, uno al lado del otro")
+            elif posture == "semi-tandem":
+                print("- Coloque un pie ligeramente adelantado, con el talón del pie delantero")
+                print("  junto a la mitad del pie trasero")
+            else:  # tandem
+                print("- Coloque un pie directamente delante del otro")
+                print("  el talón tocando la punta del pie trasero")
+            
+            self.wait_for_ready(f"Presione ENTER cuando esté en posición para la postura '{posture}'...")
+            
             # reiniciar captura de vídeo
             cap.set(cv2.CAP_PROP_POS_FRAMES, 0)  # Reiniciar video si es necesario
             start_test_time = time.time() # reiniciar tiempo de prueba
