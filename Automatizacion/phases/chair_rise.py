@@ -1,7 +1,7 @@
 import time
 import cv2
 import numpy as np
-from ..utils.phase_base import PhaseBase
+from ..utils.phase_base import PhaseBase, FullRestartRequested
 
 class ChairRisePhase(PhaseBase):
     def __init__(self, openpose, config):
@@ -17,9 +17,9 @@ class ChairRisePhase(PhaseBase):
 
     def run(self, cap):
         """
-        Método principal que ejecuta la prueba con capacidad de reinicio.
+        Método principal que ejecuta la prueba con capacidad de reinicio y reinicio global.
         """
-        return self.run_with_restart(cap)
+        return self.run_test_with_global_restart(cap)
 
     def _run_phase(self, cap):
         """
@@ -68,6 +68,8 @@ class ChairRisePhase(PhaseBase):
         
         if action == 'restart':
             raise Exception("Reinicio solicitado por el usuario")
+        elif action == 'full_restart':
+            raise FullRestartRequested("Reinicio completo solicitado por el usuario")
         elif action == 'skip':
             return None  # Indicar que se saltó la prueba
         elif action == 'exit' or action == 'emergency_stop':
@@ -96,6 +98,8 @@ class ChairRisePhase(PhaseBase):
         
         if action == 'restart':
             raise Exception("Reinicio solicitado por el usuario")
+        elif action == 'full_restart':
+            raise FullRestartRequested("Reinicio completo solicitado por el usuario")
         elif action == 'skip':
             return None  # Indicar que se saltó la prueba
         elif action == 'exit' or action == 'emergency_stop':

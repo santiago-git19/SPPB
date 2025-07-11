@@ -1,5 +1,5 @@
 import cv2
-from ..utils.phase_base import PhaseBase
+from ..utils.phase_base import PhaseBase, FullRestartRequested
 
 class GaitSpeedPhase(PhaseBase):
     def __init__(self, openpose, config):
@@ -15,9 +15,9 @@ class GaitSpeedPhase(PhaseBase):
 
     def run(self, cap, camera_id):
         """
-        Método principal que ejecuta la prueba con capacidad de reinicio.
+        Método principal que ejecuta la prueba con capacidad de reinicio y reinicio global.
         """
-        return self.run_with_restart(cap, camera_id)
+        return self.run_test_with_global_restart(cap, camera_id)
 
     def _run_phase(self, cap, camera_id):
         """
@@ -46,6 +46,8 @@ class GaitSpeedPhase(PhaseBase):
             
             if action == 'restart':
                 raise Exception("Reinicio solicitado por el usuario")
+            elif action == 'full_restart':
+                raise FullRestartRequested("Reinicio completo solicitado por el usuario")
             elif action == 'skip':
                 return self.create_skipped_result('walk', 'user_choice')
             elif action == 'exit' or action == 'emergency_stop':

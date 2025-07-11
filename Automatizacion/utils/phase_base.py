@@ -1,3 +1,7 @@
+class FullRestartRequested(Exception):
+    """Excepción personalizada para señalizar que se requiere reiniciar el test completo."""
+    pass
+
 class PhaseBase:
     """
     Clase base para todas las fases del test SPPB.
@@ -12,6 +16,14 @@ class PhaseBase:
             self.interval = 1.0 / self.interval
         else:
             self.interval = 0.2
+        
+        # Estado global del test para reinicio completo
+        self._test_state = {
+            'phase_results': [],
+            'current_phase': None,
+            'global_attempt': 1,
+            'max_global_attempts': 3
+        }
 
     def wait_for_ready(self, message="Presione ENTER cuando esté listo para comenzar..."):
         """
@@ -49,6 +61,28 @@ class PhaseBase:
             delattr(self, '_last')
         print("Estado base reiniciado.")
 
+    def restart_full_test(self):
+        """
+        Reinicia completamente el test SPPB, incluyendo todas las fases y el estado global.
+        """
+        print("\n🔄 REINICIANDO TEST COMPLETO SPPB...")
+        print("⚠️  ATENCIÓN: Se reiniciarán todas las fases del test.")
+        print("⚠️  Todos los resultados previos se perderán.")
+        
+        # Reiniciar estado global
+        self._test_state = {
+            'phase_results': [],
+            'current_phase': None,
+            'global_attempt': 1,
+            'max_global_attempts': 3
+        }
+        
+        # Reiniciar estado específico de la fase
+        self.reset_test()
+        
+        print("✅ TEST COMPLETO REINICIADO - Comenzando desde el principio...")
+        return True
+
     def wait_for_ready_with_restart(self, message="Presione ENTER cuando esté listo para comenzar..."):
         """
         Espera a que el usuario esté listo, pero también permite reiniciar, salir o saltar la prueba.
@@ -57,26 +91,30 @@ class PhaseBase:
             message (str): Mensaje que se mostrará al usuario
         
         Returns:
-            str: 'continue' para continuar, 'restart' para reiniciar, 'exit' para salir, 'skip' para saltar
+            str: 'continue' para continuar, 'restart' para reiniciar, 'exit' para salir, 'skip' para saltar, 'full_restart' para reiniciar test completo
         """
         print("\n" + message)
         print("🚨 Opciones disponibles:")
         print("  - Presione ENTER para CONTINUAR con la prueba")
         print("  - Escriba 'r' + ENTER para REINICIAR la prueba")
+        print("  - Escriba 'R' + ENTER para REINICIAR TODO EL TEST SPPB")
         print("  - Escriba 's' + ENTER para SALTAR esta prueba (persona no capacitada)")
         print("  - Escriba 'q' + ENTER para SALIR completamente")
         print("  - Ctrl+C para CANCELAR INMEDIATAMENTE (emergencia)")
         
         try:
-            user_input = input(">>> ").strip().lower()
+            user_input = input(">>> ").strip()
             
             if user_input == 'r':
                 print("🔄 REINICIANDO la prueba...")
                 return 'restart'
-            elif user_input == 's':
+            elif user_input == 'R':
+                print("🔄 REINICIANDO TODO EL TEST SPPB...")
+                return 'full_restart'
+            elif user_input.lower() == 's':
                 print("⏭️ SALTANDO esta prueba...")
                 return 'skip'
-            elif user_input == 'q':
+            elif user_input.lower() == 'q':
                 print("🚪 SALIENDO del sistema...")
                 return 'exit'
             else:
@@ -94,30 +132,34 @@ class PhaseBase:
             error_message (str): Mensaje de error opcional
         
         Returns:
-            str: 'restart', 'skip', 'exit' según la decisión del usuario
+            str: 'restart', 'skip', 'exit', 'full_restart' según la decisión del usuario
         """
         if error_message:
             print(f"\n❌ ERROR CRÍTICO: {error_message}")
         
         print("\n🚨 OPCIONES DE EMERGENCIA:")
         print("1. REINICIAR la prueba (volver a intentar)")
-        print("2. SALTAR esta prueba (persona no capacitada)")
-        print("3. SALIR completamente del sistema")
+        print("2. REINICIAR TODO EL TEST SPPB (desde el principio)")
+        print("3. SALTAR esta prueba (persona no capacitada)")
+        print("4. SALIR completamente del sistema")
         
         while True:
             try:
-                choice = input("Seleccione una opción (1/2/3): ").strip()
+                choice = input("Seleccione una opción (1/2/3/4): ").strip()
                 if choice == '1':
                     print("🔄 REINICIANDO la prueba...")
                     return 'restart'
                 elif choice == '2':
+                    print("🔄 REINICIANDO TODO EL TEST SPPB...")
+                    return 'full_restart'
+                elif choice == '3':
                     print("⏭️ SALTANDO esta prueba...")
                     return 'skip'
-                elif choice == '3':
+                elif choice == '4':
                     print("🚪 SALIENDO del sistema...")
                     return 'exit'
                 else:
-                    print("❌ Opción no válida. Seleccione 1, 2 o 3.")
+                    print("❌ Opción no válida. Seleccione 1, 2, 3 o 4.")
             except KeyboardInterrupt:
                 print("\n🚨 CANCELACIÓN DE EMERGENCIA - Saliendo del sistema...")
                 return 'exit'
@@ -139,30 +181,17 @@ class PhaseBase:
                 
                 # Ejecutar la fase específica
                 result = self._run_phase(*args, **kwargs)
-                
-                if result is not None:
-                    if isinstance(result, dict) and result.get('skipped', False):
-                        print("⏭️ Prueba saltada por decisión del usuario.")
-                        return result
-                    else:
-                        print("✅ Prueba completada exitosamente.")
-                        return result
-                else:
-                    print("❌ Prueba cancelada por el usuario.")
-                    return None
+                return self._handle_phase_result(result)
                     
             except KeyboardInterrupt:
                 print("\n🚨 INTERRUPCIÓN DE EMERGENCIA detectada")
                 action = self.ask_for_restart("Interrupción del usuario (Ctrl+C)")
                 
-                if action == 'restart':
-                    self.reset_test()
-                    attempt += 1
-                    continue
-                elif action == 'skip':
-                    return {'skipped': True, 'reason': 'emergency_interrupt'}
-                else:  # exit
-                    return None
+                restart_result = self._handle_restart_action(action)
+                if restart_result is not None:
+                    return restart_result
+                
+                attempt += 1
                     
             except Exception as e:
                 print(f"\n❌ ERROR TÉCNICO: {str(e)}")
@@ -170,24 +199,63 @@ class PhaseBase:
                 if attempt < max_attempts:
                     action = self.ask_for_restart(f"Error técnico: {str(e)}")
                     
-                    if action == 'restart':
-                        self.reset_test()
-                        attempt += 1
-                        continue
-                    elif action == 'skip':
-                        return {'skipped': True, 'reason': 'technical_error'}
-                    else:  # exit
-                        return None
-                else:
-                    print(f"❌ Se alcanzó el máximo de intentos ({max_attempts}). Terminando prueba.")
-                    action = self.ask_for_restart("Máximo de intentos alcanzado")
+                    restart_result = self._handle_restart_action(action)
+                    if restart_result is not None:
+                        return restart_result
                     
-                    if action == 'skip':
-                        return {'skipped': True, 'reason': 'max_attempts_reached'}
-                    else:
-                        return None
+                    attempt += 1
+                else:
+                    return self._handle_max_attempts_reached()
         
         return None
+
+    def _handle_phase_result(self, result):
+        """
+        Maneja el resultado de una fase ejecutada.
+        """
+        if result is not None:
+            if isinstance(result, dict) and result.get('skipped', False):
+                print("⏭️ Prueba saltada por decisión del usuario.")
+                return result
+            else:
+                print("✅ Prueba completada exitosamente.")
+                return result
+        else:
+            print("❌ Prueba cancelada por el usuario.")
+            return None
+
+    def _handle_restart_action(self, action):
+        """
+        Maneja las acciones de reinicio del usuario.
+        
+        Returns:
+            dict o None: Resultado si la acción termina la prueba, None si debe continuar
+        """
+        if action == 'restart':
+            self.reset_test()
+            return None  # Continuar con el siguiente intento
+        elif action == 'full_restart':
+            self.restart_full_test()
+            raise FullRestartRequested("FULL_RESTART_REQUESTED")  # Señal especial para reiniciar test completo
+        elif action == 'skip':
+            return {'skipped': True, 'reason': 'emergency_interrupt'}
+        else:  # exit
+            return None
+
+    def _handle_max_attempts_reached(self):
+        """
+        Maneja el caso cuando se alcanza el máximo de intentos.
+        """
+        print("❌ Se alcanzó el máximo de intentos. Terminando prueba.")
+        action = self.ask_for_restart("Máximo de intentos alcanzado")
+        
+        if action == 'full_restart':
+            self.restart_full_test()
+            raise FullRestartRequested("FULL_RESTART_REQUESTED")
+        elif action == 'skip':
+            return {'skipped': True, 'reason': 'max_attempts_reached'}
+        else:
+            return None
 
     def monitor_emergency_stop(self, message="Presione Ctrl+C para parar la prueba de emergencia"):
         """
@@ -225,3 +293,20 @@ class PhaseBase:
             NotImplementedError: Si no se implementa en la subclase
         """
         raise NotImplementedError("Las subclases deben implementar el método _run_phase")
+
+    def run_test_with_global_restart(self, *args, **kwargs):
+        """
+        Ejecuta el test con manejo de reinicio global del test completo SPPB.
+        
+        Returns:
+            dict: Resultado del test, None si se canceló
+        """
+        while True:
+            try:
+                return self.run_with_restart(*args, **kwargs)
+            except FullRestartRequested:
+                print("🔄 Reiniciando test completo SPPB...")
+                continue  # Volver a ejecutar el test desde el principio
+            except Exception as e:
+                print(f"❌ Error inesperado: {str(e)}")
+                return None

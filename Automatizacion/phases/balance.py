@@ -1,6 +1,6 @@
 import time
 import cv2
-from ..utils.phase_base import PhaseBase
+from ..utils.phase_base import PhaseBase, FullRestartRequested
 
 class BalancePhase(PhaseBase):
     def __init__(self, openpose, config):
@@ -16,9 +16,9 @@ class BalancePhase(PhaseBase):
 
     def run(self, cap, camera_id, duration):
         """
-        Método principal que ejecuta la prueba con capacidad de reinicio.
+        Método principal que ejecuta la prueba con capacidad de reinicio y reinicio global.
         """
-        return self.run_with_restart(cap, camera_id, duration)
+        return self.run_test_with_global_restart(cap, camera_id, duration)
 
     def _run_phase(self, cap, camera_id, duration):
         """
@@ -53,6 +53,8 @@ class BalancePhase(PhaseBase):
             
             if action == 'restart':
                 raise Exception("Reinicio solicitado por el usuario")
+            elif action == 'full_restart':
+                raise FullRestartRequested("Reinicio completo solicitado por el usuario")
             elif action == 'skip':
                 return self.create_skipped_result('balance', 'user_choice')
             elif action == 'exit' or action == 'emergency_stop':
@@ -82,7 +84,7 @@ class BalancePhase(PhaseBase):
                         if not ret:
                             print("Vídeo terminó prematuramente.")
                             break
-                        kps = self.openpose._process_frame(frame) # REVISAR SI FUNCIONA
+                        kps = self.openpose._process_frame(frame)
 
                         # evaluar continuidad de la prueba
                         if self.cumple_prueba(posture, kps): # Comprueba si está haciendo bien la postura
