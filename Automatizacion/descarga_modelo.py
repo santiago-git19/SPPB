@@ -5,8 +5,10 @@ from trt_pose.models import resnet18_baseline_att
 # Ruta del modelo PyTorch
 model_path = "/home/mobilenet/Documentos/Trabajo/trt_pose/models/resnet18_baseline_att_224x224_A_epoch_249.pth"
 
-# Cargar el modelo PyTorch
-model = resnet18_baseline_att(18, 19).cuda().eval()  # Cambia los parámetros según tu topología
+# Cargar el modelo PyTorch con los valores correctos
+num_parts = 21  # Número de keypoints
+num_links = 42  # Número de conexiones entre keypoints
+model = resnet18_baseline_att(num_parts, num_links).cuda().eval()
 model.load_state_dict(torch.load(model_path))
 
 # Convertir a TensorRT
