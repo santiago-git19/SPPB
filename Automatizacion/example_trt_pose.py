@@ -1,5 +1,3 @@
-
-
 from utils.trt_pose_proc import TRTPoseProcessor
 import cv2
 import time
