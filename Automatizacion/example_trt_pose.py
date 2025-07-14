@@ -8,8 +8,8 @@ import cv2
 
 def main():
     # Rutas de los modelos y topología
-    model_path = "models/trt_pose_resnet18.pth"  # Cambia según tu modelo
-    topology_path = "models/topology.json"
+    model_path = "home/mobilenet/Documentos/Trabajo/trt_pose/models/trt_pose_resnet18.pth"  # Cambia según tu modelo
+    topology_path = "home/mobilenet/Documentos/Trabajo/trt_pose/models/topology.json"
 
     # Inicializar procesador
     print("=== Inicializando TRTPoseProcessor ===")
