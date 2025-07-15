@@ -50,7 +50,7 @@ class GaitSpeedPhase(PhaseBase):
                 raise FullRestartRequested("Reinicio completo solicitado por el usuario")
             elif action == 'skip':
                 return self.create_skipped_result('walk', 'user_choice')
-            elif action == 'exit' or action == 'emergency_stop':
+            elif action == 'exit' or action == 'emergency_            git push -u origin mainstop':
                 return None
             
             # Ejecutar el intento con monitoreo de interrupciones
