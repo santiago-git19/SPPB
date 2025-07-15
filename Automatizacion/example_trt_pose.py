@@ -5,7 +5,7 @@ import time
 def main():
     # Rutas de los modelos y topología
     model_path = "/home/mobilenet/Documentos/Trabajo/trt_pose/models/resnet18_baseline_att_224x224_A_epoch_249.pth"  # Cambia según tu modelo
-    topology_path = "home/mobilenet/Documentos/Trabajo/trt_pose/models/human_pose.json"
+    topology_path = "home/mobilenet/Documentos/Trabajo/trt_pose/models/human_pose_18.json"
 
     # Inicializar procesador
     print("=== Inicializando TRTPoseProcessor ===")
