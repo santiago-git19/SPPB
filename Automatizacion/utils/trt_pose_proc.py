@@ -1,284 +1,259 @@
-import sys
-import os
-import numpy as np
-import cv2
 import torch
-import torchvision.transforms as transforms
-import PIL.Image
+import torch2trt
 from torch2trt import TRTModule
+import trt_pose.coco
+import trt_pose.models
+import json
+import cv2
+import numpy as np
+import torchvision.transforms as transforms
+from PIL import Image
 
 class TRTPoseProcessor:
-    def __init__(self, model_path=None, topology_path=None):
+    def __init__(self, model_path, topology_path, use_tensorrt=True):
         """
-        Inicializa el procesador TensorRT Pose.
+        Inicializa el procesador de pose estimation
         
         Args:
-            model_path (str): Ruta al modelo TensorRT (.pth o .engine)
-            topology_path (str): Ruta al archivo de topología JSON (opcional)
+            model_path: Ruta al modelo (.pth)
+            topology_path: Ruta al archivo de topología JSON
+            use_tensorrt: Si usar TensorRT (True) o PyTorch normal (False)
         """
+        self.use_tensorrt = use_tensorrt
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         
-        # Configurar rutas por defecto si no se proporcionan
-        if model_path is None:
-            # Buscar modelo por defecto en carpeta models/
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            project_root = os.path.dirname(current_dir)
-            model_path = os.path.join(project_root, 'models', 'trt_pose_resnet18.pth')
-        
-        if topology_path is None:
-            # Buscar topología por defecto
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            project_root = os.path.dirname(current_dir)
-            topology_path = os.path.join(project_root, 'models', 'topology.json')
-        
-        # Verificar que el modelo existe
-        if not os.path.exists(model_path):
-            raise FileNotFoundError(f"Modelo TensorRT no encontrado en: {model_path}")
-        
-        print(f"Cargando modelo TensorRT desde: {model_path}")
-        
-        # Cargar el modelo TensorRT
-        self.model = TRTModule()
-        self.model.load_state_dict(torch.load(model_path))
-        self.model.eval()
-        
-        # Configurar transformaciones de imagen
-        self.transform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        ])
-        
-        # Dimensiones de entrada del modelo (ajustar según el modelo)
-        self.input_width = 224
-        self.input_height = 224
-        
-        # Topología de pose (COCO format por defecto)
-        self.topology = self._load_topology(topology_path) if topology_path else self._get_default_topology()
-        
-    def _load_topology(self, topology_path):
-        """
-        Carga la topología desde un archivo JSON.
-        """
-        import json
+        # Cargar topología
         with open(topology_path, 'r') as f:
-            topology = json.load(f)
-        return topology
+            self.human_pose = json.load(f)
+        
+        self.topology = trt_pose.coco.coco_category_to_topology(self.human_pose)
+        self.num_parts = len(self.human_pose['keypoints'])
+        self.num_links = len(self.human_pose['skeleton'])
+        
+        # Configurar transformaciones
+        self.WIDTH = 224
+        self.HEIGHT = 224
+        self.mean = torch.Tensor([0.485, 0.456, 0.406]).to(self.device)
+        self.std = torch.Tensor([0.229, 0.224, 0.225]).to(self.device)
+        
+        # Cargar modelo
+        self._load_model(model_path)
+        
+        print(f"Modelo cargado exitosamente en: {self.device}")
+        print(f"Usando TensorRT: {self.use_tensorrt}")
+        
+    def _load_model(self, model_path):
+        """Carga el modelo según el tipo especificado"""
+        if self.use_tensorrt:
+            try:
+                # Intentar cargar como modelo TensorRT
+                self.model = TRTModule()
+                self.model.load_state_dict(torch.load(model_path))
+                print(f"Modelo TensorRT cargado desde: {model_path}")
+            except Exception as e:
+                print(f"Error cargando modelo TensorRT: {e}")
+                print("Intentando cargar como modelo PyTorch normal...")
+                self.use_tensorrt = False
+                self._load_pytorch_model(model_path)
+        else:
+            self._load_pytorch_model(model_path)
     
-    def _get_default_topology(self):
-        """
-        Devuelve la topología COCO por defecto.
-        """
-        return {
-            'keypoints': [
-                'nose', 'left_eye', 'right_eye', 'left_ear', 'right_ear',
-                'left_shoulder', 'right_shoulder', 'left_elbow', 'right_elbow',
-                'left_wrist', 'right_wrist', 'left_hip', 'right_hip',
-                'left_knee', 'right_knee', 'left_ankle', 'right_ankle'
-            ],
-            'skeleton': [
-                [16, 14], [14, 12], [17, 15], [15, 13], [12, 13],
-                [6, 12], [7, 13], [6, 7], [6, 8], [7, 9],
-                [8, 10], [9, 11], [2, 3], [1, 2], [1, 3],
-                [2, 4], [3, 5], [4, 6], [5, 7]
-            ]
-        }
+    def _load_pytorch_model(self, model_path):
+        """Carga el modelo PyTorch normal"""
+        # Crear modelo
+        self.model = trt_pose.models.resnet18_baseline_att(
+            self.num_parts, 2 * self.num_links
+        ).to(self.device)
+        
+        # Cargar pesos
+        self.model.load_state_dict(torch.load(model_path, map_location=self.device))
+        self.model.eval()
+        print(f"Modelo PyTorch cargado desde: {model_path}")
     
-    def _preprocess_frame(self, frame):
-        """
-        Preprocesa el frame para la inferencia.
-        """
-        # Redimensionar frame
-        frame_resized = cv2.resize(frame, (self.input_width, self.input_height))
+    def preprocess_image(self, image):
+        """Preprocesa la imagen para el modelo"""
+        # Redimensionar imagen
+        image = cv2.resize(image, (self.WIDTH, self.HEIGHT))
         
         # Convertir BGR a RGB
-        frame_rgb = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         
-        # Convertir a PIL Image
-        pil_image = PIL.Image.fromarray(frame_rgb)
+        # Convertir a tensor
+        image = torch.from_numpy(image).float().to(self.device)
+        image = image.permute(2, 0, 1)  # HWC a CHW
         
-        # Aplicar transformaciones
-        tensor = self.transform(pil_image).unsqueeze(0)
+        # Normalizar
+        image = image / 255.0
+        image = (image - self.mean.view(-1, 1, 1)) / self.std.view(-1, 1, 1)
         
-        return tensor.to(self.device)
-    
-    def _postprocess_output(self, output, original_shape):
-        """
-        Postprocesa la salida del modelo para obtener keypoints.
-        """
-        # Extraer mapas de calor y vectores de afinidad
-        if isinstance(output, (tuple, list)):
-            heatmaps = output[0]
-            pafs = output[1] if len(output) > 1 else None
-        else:
-            heatmaps = output
-            pafs = None
+        # Añadir dimensión batch
+        image = image.unsqueeze(0)
         
-        # Procesar mapas de calor para obtener keypoints
-        keypoints = self._extract_keypoints(heatmaps, original_shape)
-        
-        return keypoints
-    
-    def _extract_keypoints(self, heatmaps, original_shape):
-        """
-        Extrae keypoints de los mapas de calor.
-        """
-        keypoints = []
-        
-        # Obtener dimensiones originales
-        orig_h, orig_w = original_shape[:2]
-        
-        # Procesar cada mapa de calor
-        for i in range(heatmaps.shape[1]):  # Para cada keypoint
-            heatmap = heatmaps[0, i].cpu().numpy()
-            
-            # Encontrar el punto máximo en el mapa de calor
-            max_val = np.max(heatmap)
-            if max_val > 0.1:  # Umbral de confianza
-                max_idx = np.unravel_index(np.argmax(heatmap), heatmap.shape)
-                
-                # Escalar coordenadas al tamaño original
-                y = max_idx[0] * orig_h / heatmap.shape[0]
-                x = max_idx[1] * orig_w / heatmap.shape[1]
-                
-                keypoints.append([x, y, max_val])
-            else:
-                keypoints.append([0, 0, 0])  # No detectado
-        
-        return np.array(keypoints)
+        return image
     
     def process_frame(self, frame):
         """
-        Procesa un frame y devuelve los keypoints detectados.
+        Procesa un frame y retorna los keypoints detectados
         
         Args:
-            frame (numpy.ndarray): Frame de entrada en formato BGR
+            frame: Frame de imagen (numpy array)
             
         Returns:
-            numpy.ndarray: Array de keypoints [x, y, confidence] o None si no se detectan
+            keypoints: Lista de keypoints detectados
         """
-        try:
-            # Guardar forma original
-            original_shape = frame.shape
+        with torch.no_grad():
+            # Preprocesar imagen
+            input_tensor = self.preprocess_image(frame)
             
-            # Preprocesar frame
-            input_tensor = self._preprocess_frame(frame)
+            # Realizar inferencia
+            cmap, paf = self.model(input_tensor)
             
-            # Inferencia
-            with torch.no_grad():
-                output = self.model(input_tensor)
+            # Postprocesar resultados
+            keypoints = self.postprocess_results(cmap, paf, frame.shape[:2])
             
-            # Postprocesar salida
-            keypoints = self._postprocess_output(output, original_shape)
-            
-            # Devolver keypoints si se detectaron personas
-            if keypoints is not None and len(keypoints) > 0:
-                return keypoints
-            else:
-                return None
-                
-        except Exception as e:
-            print(f"Error procesando frame con TensorRT Pose: {e}")
-            return None
+            return keypoints
     
-    def _process_frame(self, frame):
+    def postprocess_results(self, cmap, paf, original_shape):
         """
-        Método alternativo para compatibilidad con la clase OpenPose.
+        Postprocesa los resultados del modelo para obtener keypoints
+        
+        Args:
+            cmap: Confidence maps
+            paf: Part Affinity Fields
+            original_shape: Forma original de la imagen (height, width)
+            
+        Returns:
+            keypoints: Lista de keypoints detectados
         """
-        return self.process_frame(frame)
+        # Redimensionar mapas a tamaño original
+        height, width = original_shape
+        scale_x = width / self.WIDTH
+        scale_y = height / self.HEIGHT
+        
+        # Convertir a numpy
+        cmap = cmap.squeeze().cpu().numpy()
+        paf = paf.squeeze().cpu().numpy()
+        
+        # Encontrar peaks en confidence maps
+        keypoints = []
+        
+        # Umbral para detección de keypoints
+        threshold = 0.1
+        
+        for i in range(self.num_parts):
+            confidence_map = cmap[i]
+            
+            # Encontrar máximos locales
+            peaks = self._find_peaks(confidence_map, threshold)
+            
+            # Escalar coordenadas al tamaño original
+            scaled_peaks = []
+            for peak in peaks:
+                x, y, confidence = peak
+                x = int(x * scale_x)
+                y = int(y * scale_y)
+                scaled_peaks.append((x, y, confidence, i))
+            
+            keypoints.extend(scaled_peaks)
+        
+        return keypoints
     
-    def get_keypoint_names(self):
-        """
-        Devuelve los nombres de los keypoints.
-        """
-        return self.topology['keypoints']
-    
-    def get_skeleton_connections(self):
-        """
-        Devuelve las conexiones del esqueleto.
-        """
-        return self.topology['skeleton']
+    def _find_peaks(self, confidence_map, threshold):
+        """Encuentra peaks en el mapa de confianza"""
+        peaks = []
+        
+        # Aplicar filtro de máximos locales
+        from scipy.ndimage import maximum_filter
+        
+        # Encontrar máximos locales
+        local_maxima = maximum_filter(confidence_map, size=3) == confidence_map
+        
+        # Aplicar umbral
+        above_threshold = confidence_map > threshold
+        
+        # Combinar condiciones
+        peak_mask = local_maxima & above_threshold
+        
+        # Obtener coordenadas de peaks
+        y_coords, x_coords = np.where(peak_mask)
+        
+        for x, y in zip(x_coords, y_coords):
+            confidence = confidence_map[y, x]
+            peaks.append((x, y, confidence))
+        
+        return peaks
     
     def visualize_keypoints(self, frame, keypoints, draw_skeleton=True):
         """
-        Visualiza los keypoints en el frame.
+        Visualiza los keypoints en el frame
         
         Args:
-            frame (numpy.ndarray): Frame original
-            keypoints (numpy.ndarray): Array de keypoints
-            draw_skeleton (bool): Si dibujar las conexiones del esqueleto
+            frame: Frame original
+            keypoints: Lista de keypoints detectados
+            draw_skeleton: Si dibujar el esqueleto
             
         Returns:
-            numpy.ndarray: Frame con keypoints dibujados
+            frame: Frame con keypoints visualizados
         """
-        if keypoints is None:
+        if keypoints is None or len(keypoints) == 0:
             return frame
         
-        result_frame = frame.copy()
+        # Colores para diferentes partes del cuerpo
+        colors = [
+            (255, 0, 0),    # Rojo
+            (0, 255, 0),    # Verde
+            (0, 0, 255),    # Azul
+            (255, 255, 0),  # Amarillo
+            (255, 0, 255),  # Magenta
+            (0, 255, 255),  # Cian
+            (128, 0, 128),  # Púrpura
+            (255, 165, 0),  # Naranja
+            (255, 192, 203), # Rosa
+            (128, 128, 128), # Gris
+            (255, 255, 255), # Blanco
+            (0, 0, 0),      # Negro
+            (255, 20, 147), # Deep Pink
+            (0, 191, 255),  # Deep Sky Blue
+            (34, 139, 34),  # Forest Green
+            (255, 140, 0),  # Dark Orange
+            (220, 20, 60),  # Crimson
+        ]
         
         # Dibujar keypoints
-        for i, (x, y, conf) in enumerate(keypoints):
-            if conf > 0.1:  # Solo dibujar si hay confianza
-                cv2.circle(result_frame, (int(x), int(y)), 3, (0, 255, 0), -1)
-                cv2.putText(result_frame, str(i), (int(x), int(y-10)), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1)
+        for keypoint in keypoints:
+            x, y, confidence, part_id = keypoint
+            
+            if confidence > 0.1:  # Solo dibujar si la confianza es alta
+                color = colors[part_id % len(colors)]
+                cv2.circle(frame, (int(x), int(y)), 3, color, -1)
+                
+                # Dibujar nombre de la parte (opcional)
+                if part_id < len(self.human_pose['keypoints']):
+                    part_name = self.human_pose['keypoints'][part_id]
+                    cv2.putText(frame, part_name, (int(x), int(y-10)), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1)
         
-        # Dibujar esqueleto
-        if draw_skeleton:
-            for connection in self.topology['skeleton']:
-                idx1, idx2 = connection[0] - 1, connection[1] - 1  # Convertir a índices base 0
-                if (0 <= idx1 < len(keypoints) and 0 <= idx2 < len(keypoints) and 
-                    keypoints[idx1][2] > 0.1 and keypoints[idx2][2] > 0.1):
-                    
-                    pt1 = (int(keypoints[idx1][0]), int(keypoints[idx1][1]))
-                    pt2 = (int(keypoints[idx2][0]), int(keypoints[idx2][1]))
-                    cv2.line(result_frame, pt1, pt2, (0, 0, 255), 2)
+        # Dibujar esqueleto si se solicita
+        if draw_skeleton and len(keypoints) > 0:
+            self._draw_skeleton(frame, keypoints)
         
-        return result_frame
+        return frame
     
-    @staticmethod
-    def download_pretrained_model(model_name='resnet18', target_dir='models'):
-        """
-        Descarga un modelo preentrenado de TensorRT Pose.
+    def _draw_skeleton(self, frame, keypoints):
+        """Dibuja las conexiones del esqueleto"""
+        # Crear diccionario de keypoints por parte
+        keypoint_dict = {}
+        for keypoint in keypoints:
+            x, y, confidence, part_id = keypoint
+            if confidence > 0.1:
+                keypoint_dict[part_id] = (int(x), int(y))
         
-        Args:
-            model_name (str): Nombre del modelo ('resnet18' o 'densenet121')
-            target_dir (str): Directorio donde guardar el modelo
-        """
-        import urllib.request
-        import os
+        # Dibujar conexiones según el esqueleto definido
+        for connection in self.human_pose['skeleton']:
+            part_a, part_b = connection
+            if part_a in keypoint_dict and part_b in keypoint_dict:
+                point_a = keypoint_dict[part_a]
+                point_b = keypoint_dict[part_b]
+                cv2.line(frame, point_a, point_b, (0, 255, 0), 2)
         
-        # URLs de modelos preentrenados
-        model_urls = {
-            'resnet18': 'https://github.com/NVIDIA-AI-IOT/trt_pose/releases/download/v0.0.1/resnet18_baseline_att_224x224_A_epoch_249.pth',
-            'densenet121': 'https://github.com/NVIDIA-AI-IOT/trt_pose/releases/download/v0.0.1/densenet121_baseline_att_256x256_B_epoch_160.pth'
-        }
-        
-        topology_url = 'https://raw.githubusercontent.com/NVIDIA-AI-IOT/trt_pose/master/tasks/human_pose/human_pose.json'
-        
-        if model_name not in model_urls:
-            raise ValueError(f"Modelo {model_name} no disponible. Opciones: {list(model_urls.keys())}")
-        
-        # Crear directorio si no existe
-        os.makedirs(target_dir, exist_ok=True)
-        
-        # Descargar modelo
-        model_filename = f"trt_pose_{model_name}.pth"
-        model_path = os.path.join(target_dir, model_filename)
-        
-        if not os.path.exists(model_path):
-            print(f"Descargando modelo {model_name}...")
-            urllib.request.urlretrieve(model_urls[model_name], model_path)
-            print(f"Modelo descargado en: {model_path}")
-        else:
-            print(f"Modelo ya existe en: {model_path}")
-        
-        # Descargar topología
-        topology_path = os.path.join(target_dir, 'topology.json')
-        if not os.path.exists(topology_path):
-            print("Descargando topología...")
-            urllib.request.urlretrieve(topology_url, topology_path)
-            print(f"Topología descargada en: {topology_path}")
-        else:
-            print(f"Topología ya existe en: {topology_path}")
-        
-        return model_path, topology_path
+        return frame
