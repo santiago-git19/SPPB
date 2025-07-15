@@ -13,7 +13,7 @@ def convert_model_to_tensorrt():
     """
     # Rutas
     model_path = "/home/mobilenet/Documentos/Trabajo/trt_pose/models/resnet18_baseline_att_224x224_A_epoch_249.pth"
-    topology_path = "/home/mobilenet/Documentos/Trabajo/trt_pose/models/human_pose_18.json"
+    topology_path = "/home/mobilenet/Documentos/Trabajo/trt_pose/models/human_pose_exact.json"
     output_path = "/home/mobilenet/Documentos/Trabajo/trt_pose/models/resnet18_baseline_att_224x224_A_epoch_249_trt.pth"
     
     # Cargar topología
