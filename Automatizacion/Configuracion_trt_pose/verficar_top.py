@@ -1,6 +1,6 @@
 import json
 
-topology_path = "/home/mobilenet/Documentos/Trabajo/trt_pose/models/human_pose.json"
+topology_path = "/home/mobilenet/Documentos/Trabajo/trt_pose/tasks/human_pose/human_pose.json"
 
 with open(topology_path, 'r') as f:
     topology = json.load(f)
