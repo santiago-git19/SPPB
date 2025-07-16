@@ -1,18 +1,17 @@
-from utils.pose_classifier import PoseClassifier
+from utils.trt_pose_proc import TRTPoseProcessor
 import cv2
 import time
 import os
 
 def main():
-    print("=== Ejemplo de Clasificación de Poses ===")
+    print("=== Procesamiento de Keypoints y Exoesqueleto ===")
     
     # Configuración de rutas (ajusta según tu setup)
     pose_model_path = "models/resnet18_baseline_att_224x224_A_epoch_249.pth"
     topology_path = "models/human_pose.json"
-    classification_engine_path = "models/pose_classification.engine"
     
     # Verificar que los modelos existen
-    required_files = [pose_model_path, topology_path, classification_engine_path]
+    required_files = [pose_model_path, topology_path]
     missing_files = [f for f in required_files if not os.path.exists(f)]
     
     if missing_files:
@@ -28,50 +27,94 @@ def main():
     # Verificar que el video existe
     if not os.path.exists(video_path):
         print(f"ERROR: Video no encontrado: {video_path}")
-        print("Crea un video de demostración: python simple_pose_classification.py --demo")
+        print("Coloca tu video en el directorio del proyecto")
         return
     
     try:
-        # Inicializar el clasificador de poses
-        print("Inicializando clasificador de poses...")
-        classifier = PoseClassifier(
-            pose_model_path=pose_model_path,
-            topology_path=topology_path,
-            classification_engine_path=classification_engine_path
-        )
+        # Inicializar el procesador TensorRT Pose
+        print("Inicializando TRTPoseProcessor...")
+        processor = TRTPoseProcessor(pose_model_path, topology_path)
         
-        # Procesar video con clasificación de poses
+        # Abrir video
+        cap = cv2.VideoCapture(video_path)
+        
+        if not cap.isOpened():
+            print(f"ERROR: No se pudo abrir el video: {video_path}")
+            return
+        
+        # Configurar video de salida
+        output_path = "video_con_exoesqueleto.mp4"
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        fps = 15  # Limitar FPS
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+        
         print(f"Procesando video: {video_path}")
-        output_path = "video_con_poses_clasificadas.mp4"
+        print(f"Resolución: {width}x{height}")
+        print(f"FPS: {fps}")
         
-        results = classifier.process_video(
-            video_path=video_path,
-            output_path=output_path,
-            show_video=True,
-            fps_limit=15
-        )
+        # Variables para control de FPS
+        frame_count = 0
+        prev_time = 0
+        frame_interval = 1.0 / fps
         
-        if results:
-            print("\n=== Resultados ===")
-            print(f"Frames procesados: {len(results)}")
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                print("Fin del video.")
+                break
             
-            # Mostrar estadísticas
-            stats = classifier.get_pose_statistics()
-            print(f"Pose más común: {stats['most_common_pose']}")
-            print(f"Total de frames: {stats['total_frames']}")
+            # Controlar FPS
+            current_time = time.time()
+            if current_time - prev_time < frame_interval:
+                continue
+            prev_time = current_time
             
-            print("\nDistribución de poses:")
-            for pose, percentage in stats['pose_percentages'].items():
-                count = stats['pose_counts'][pose]
-                print(f"  {pose}: {count} frames ({percentage:.1f}%)")
+            # Procesar frame para extraer keypoints
+            keypoints = processor.process_frame(frame)
             
-            print(f"\nVideo procesado guardado en: {output_path}")
-        else:
-            print("No se obtuvieron resultados.")
+            # Visualizar keypoints y exoesqueleto
+            if keypoints is not None:
+                frame = processor.visualize_keypoints(frame, keypoints, draw_skeleton=True)
+                print(f"Frame {frame_count}: {len(keypoints)} keypoints detectados")
+            else:
+                print(f"Frame {frame_count}: No se detectaron keypoints")
+            
+            # Añadir información al frame
+            cv2.putText(frame, f"Frame: {frame_count}", (10, 30), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            cv2.putText(frame, f"Keypoints: {len(keypoints) if keypoints is not None else 0}", 
+                       (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            
+            # Guardar frame procesado
+            out.write(frame)
+            
+            # Mostrar frame
+            cv2.imshow('TensorRT Pose - Exoesqueleto', frame)
+            
+            # Salir con 'q'
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+            
+            frame_count += 1
+            
+            # Mostrar progreso cada 30 frames
+            if frame_count % 30 == 0:
+                print(f"Procesados {frame_count} frames...")
+        
+        # Cleanup
+        cap.release()
+        out.release()
+        cv2.destroyAllWindows()
+        
+        print("\n=== Procesamiento Completado ===")
+        print(f"Frames procesados: {frame_count}")
+        print(f"Video con exoesqueleto guardado en: {output_path}")
             
     except Exception as e:
         print(f"ERROR: {e}")
-        print("Verifica que todos los modelos estén correctamente instalados.")
+        print("Verifica que el modelo TensorRT Pose esté correctamente instalado.")
 
 def test_single_frame():
     """
@@ -80,11 +123,10 @@ def test_single_frame():
     print("\n=== Procesamiento de Frame Individual ===")
     
     try:
-        # Inicializar clasificador
-        classifier = PoseClassifier(
-            pose_model_path="models/resnet18_baseline_att_224x224_A_epoch_249.pth",
-            topology_path="models/human_pose.json",
-            classification_engine_path="models/pose_classification.engine"
+        # Inicializar procesador
+        processor = TRTPoseProcessor(
+            model_path="models/resnet18_baseline_att_224x224_A_epoch_249.pth",
+            topology_path="models/human_pose.json"
         )
         
         # Crear un frame de prueba (imagen negra)
@@ -92,11 +134,11 @@ def test_single_frame():
         test_frame = np.zeros((480, 640, 3), dtype=np.uint8)
         
         # Procesar frame
-        pose_class, confidence, keypoints = classifier.process_single_frame(test_frame)
+        keypoints = processor.process_frame(test_frame)
         
-        print(f"Pose detectada: {pose_class}")
-        print(f"Confianza: {confidence:.2f}")
         print(f"Keypoints detectados: {keypoints is not None}")
+        if keypoints is not None:
+            print(f"Número de keypoints: {len(keypoints)}")
         
     except Exception as e:
         print(f"Error en procesamiento individual: {e}")
