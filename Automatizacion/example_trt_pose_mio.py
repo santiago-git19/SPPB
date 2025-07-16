@@ -1,7 +1,7 @@
 import json                                           # Para cargar definición de keypoints y esqueleto
 import trt_pose.coco                                  # Utilidad para convertir formato COCO a topología de trt_pose
 
-with open('/home/Documentos/Trabajo/trt_pose/tasks/human_pose/human_pose.json', 'r') as f:
+with open('/home/mobilenet/Documentos/Trabajo/trt_pose/tasks/human_pose/human_pose.json', 'r') as f:
     human_pose = json.load(f)                         # Carga la topología de keypoints y conexiones
 
 topology = trt_pose.coco.coco_category_to_topology(human_pose)  # Convierte COCO a formato de trt_pose
@@ -16,7 +16,7 @@ model = trt_pose.models.resnet18_baseline_att(num_parts, 2 * num_links).cuda().e
 import torch                                         # PyTorch para cargar pesos
 
 # Ruta al checkpoint original de PyTorch
-MODEL_WEIGHTS = '/home/Documentos/Trabajo/trt_pose/models/resnet18_baseline_att_224x224_A_epoch_249.pth'
+MODEL_WEIGHTS = '/home/mobilenet/Documentos/Trabajo/trt_pose/models/resnet18_baseline_att_224x224_A_epoch_249.pth'
 model.load_state_dict(torch.load(MODEL_WEIGHTS))     # Carga pesos entrenados
 
 WIDTH, HEIGHT = 224, 224                            # Dimensiones de entrada requeridas por el modelo
@@ -46,7 +46,7 @@ import sys
 # Inicializar procesador que envuelve el engine TensorRT
 from utils.trt_pose_proc import TRTPoseProcessor
 processor = TRTPoseProcessor(model_path=OPTIMIZED_MODEL,
-                              topology_path='/home/Documentos/Trabajo/trt_pose/tasks/human_pose/human_pose.json')
+                              topology_path='/home/mobilenet/Documentos/Trabajo/trt_pose/tasks/human_pose/human_pose.json')
 
 # Rutas de video de entrada y salida
 input_video = 'Automatizacion/WIN_20250702_12_09_08_Pro.mp4'  # Video SPPB
