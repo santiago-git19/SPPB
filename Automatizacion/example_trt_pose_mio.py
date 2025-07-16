@@ -26,7 +26,9 @@ data = torch.zeros((1, 3, HEIGHT, WIDTH)).cuda()     # Tensor de prueba para la 
 import torch2trt                                      # Utilidad para convertir modelo PyTorch a TensorRT
 
 # Convertir el modelo PyTorch a TensorRT (modo fp16)
+print("Iniciando conversión del modelo PyTorch a TensorRT...")
 model_trt = torch2trt.torch2trt(model, [data], fp16_mode=True, max_workspace_size=1<<25)
+print("Conversión completada.")
 
 OPTIMIZED_MODEL = 'resnet18_baseline_att_224x224_A_epoch_249_trt.pth'  # Archivo de salida con pesos optimizados
 
@@ -35,8 +37,10 @@ torch.save(model_trt.state_dict(), OPTIMIZED_MODEL)  # Guarda el state_dict Tens
 from torch2trt import TRTModule                        # Para cargar el state_dict TensorRT
 
 # Recargar el modelo optimizado (TensorRT) en TRTModule
+print("Cargando modelo optimizado...")
 model_trt = TRTModule()
 model_trt.load_state_dict(torch.load(OPTIMIZED_MODEL))
+print("Modelo optimizado cargado.")
 
 # --- Procesamiento de video con exoesqueleto ---
 import cv2                                            # OpenCV para I/O de video y dibujo
@@ -45,8 +49,10 @@ import sys
 
 # Inicializar procesador que envuelve el engine TensorRT
 from utils.trt_pose_proc import TRTPoseProcessor
+print("Inicializando TRTPoseProcessor...")
 processor = TRTPoseProcessor(model_path=OPTIMIZED_MODEL,
                               topology_path='/home/mobilenet/Documentos/Trabajo/trt_pose/tasks/human_pose/human_pose.json')
+print("TRTPoseProcessor inicializado.")
 
 # Rutas de video de entrada y salida
 input_video = 'Automatizacion/WIN_20250702_12_09_08_Pro.mp4'  # Video SPPB
