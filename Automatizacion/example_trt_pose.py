@@ -7,8 +7,8 @@ def main():
     print("=== Procesamiento de Keypoints y Exoesqueleto ===")
     
     # Configuración de rutas (ajusta según tu setup)
-    pose_model_path = "home/mobilenet/Documentos/Trabajo/models/resnet18_baseline_att_224x224_A_epoch_249.pth"
-    topology_path = "home/mobilenet/Documentos/Trabajo/models/human_pose.json"
+    pose_model_path = "home/mobilenet/Documentos/Trabajo/trt_pose/models/resnet18_baseline_att_224x224_A_epoch_249.pth"
+    topology_path = "home/mobilenet/Documentos/Trabajo/trt_pose/models/human_pose.json"
     
     # Verificar que los modelos existen
     required_files = [pose_model_path, topology_path]
