@@ -341,7 +341,7 @@ def main():
     logger.info("=" * 60)
     
     # Configuración de archivos
-    input_video = 'Automatizacion/WIN_20250702_12_09_08_Pro.mp4'
+    input_video = 'WIN_20250702_12_09_08_Pro.mp4'
     output_video = 'video_con_exoesqueleto_optimizado.mp4'
     
     # Verificar archivo de entrada
