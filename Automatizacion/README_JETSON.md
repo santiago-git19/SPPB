@@ -13,6 +13,8 @@ Sistema completo de estimación de poses para Jetson Nano, optimizado para:
 
 ### Scripts Principales
 - `example_trt_pose_final.py` - Script principal optimizado
+- `convert_model_to_tensorrt.py` - Convertidor PyTorch → TensorRT con monitoreo completo
+- `model_manager.py` - Gestor de modelos con verificación y conversión automática
 - `download_models_v2.py` - Descargador automático de dependencias
 - `utils/jetson_utils.py` - Utilidades específicas para Jetson Nano
 - `utils/trt_pose_proc.py` - Procesador TensorRT Pose
@@ -21,6 +23,69 @@ Sistema completo de estimación de poses para Jetson Nano, optimizado para:
 - `trt_pose_config.json` - Configuración automática generada
 - `models/` - Directorio para modelos pre-entrenados
 - `configs/` - Directorio para archivos de configuración
+
+## Conversión de Modelos PyTorch → TensorRT
+
+### 🔄 Conversión Automática (Recomendado)
+```bash
+# Conversión automática con monitoreo completo
+python convert_model_to_tensorrt.py
+```
+
+Este proceso:
+- ✅ **Configura swap de 4GB** automáticamente
+- ✅ **Limita CPU a 1 core** para evitar sobrecalentamiento
+- ✅ **Monitorea recursos** cada 15 segundos durante conversión
+- ✅ **Reporta progreso** con temperatura y memoria
+- ✅ **Pausas automáticas** si temperatura > 70°C o memoria > 80%
+- ✅ **Verifica modelo convertido** con benchmark de rendimiento
+- ✅ **Tiempo estimado**: 5-15 minutos en Jetson Nano
+
+### 📊 Gestión de Modelos
+```bash
+# Verificar estado de modelos
+python model_manager.py --check
+
+# Conversión solo si es necesario
+python model_manager.py --auto
+
+# Validar modelo TensorRT existente
+python model_manager.py --validate
+
+# Reporte completo del sistema
+python model_manager.py --status
+```
+
+### ⚙️ Configuración Manual de Swap (si falla automático)
+```bash
+# Crear swap de 4GB para conversión
+sudo fallocate -l 4G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+
+# Verificar swap activo
+swapon --show
+free -h
+```
+
+### 📈 Monitoreo Durante Conversión
+El script muestra logs como:
+```
+2025-01-XX 10:15:30 - INFO - ⚡ Iniciando conversión PyTorch → TensorRT...
+2025-01-XX 10:15:45 - INFO - ✅ Modelo PyTorch: 45.2 MB
+2025-01-XX 10:16:00 - INFO - 🔄 Ejecutando torch2trt...
+2025-01-XX 10:16:00 - INFO -    Esto puede tomar 5-15 minutos en Jetson Nano...
+2025-01-XX 10:16:30 - INFO - ⏱️ Conversión en progreso (0.5 min) - Memoria: 72.3% - Temp: 58.2°C
+2025-01-XX 10:17:00 - INFO - ⏱️ Conversión en progreso (1.0 min) - Memoria: 75.1% - Temp: 61.4°C
+2025-01-XX 10:18:00 - WARNING - 🌡️ ALERTA TEMPERATURA: 71.2°C - Pausando para enfriar...
+2025-01-XX 10:20:45 - INFO - ✅ Conversión completada en 4.8 minutos
+2025-01-XX 10:20:50 - INFO - ✅ Modelo TensorRT guardado: resnet18_baseline_att_224x224_A_epoch_249_trt.pth (38.7 MB)
+2025-01-XX 10:21:00 - INFO - 📊 Resultados de rendimiento:
+2025-01-XX 10:21:00 - INFO -    PyTorch: 145.2 ms por inferencia
+2025-01-XX 10:21:00 - INFO -    TensorRT: 32.7 ms por inferencia
+2025-01-XX 10:21:00 - INFO -    Aceleración: 4.4x
+```
 
 ## Instalación Automática
 
@@ -52,7 +117,26 @@ sudo python setup.py install
 
 ## Uso del Sistema
 
-### Ejecución Básica
+### 🚀 Flujo Completo Recomendado
+```bash
+# 1. Descargar dependencias
+python download_models_v2.py
+
+# 2. Convertir modelo a TensorRT (primera vez)
+python convert_model_to_tensorrt.py
+
+# 3. Procesar video con modelo optimizado
+python example_trt_pose_final.py
+```
+
+### ⚡ Conversión Rápida
+```bash
+# Conversión automática solo si es necesario
+python model_manager.py --auto
+python example_trt_pose_final.py
+```
+
+### 🔧 Uso Avanzado
 ```bash
 # Ejecutar procesamiento con monitoreo automático
 python example_trt_pose_final.py

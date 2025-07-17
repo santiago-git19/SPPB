@@ -138,7 +138,7 @@ class OptimizedTRTPoseProcessor:
         self.resource_monitor.start_monitoring()
         
     def setup_model(self):
-        """Configura el modelo TensorRT"""
+        """Configura el modelo TensorRT con conversión automática si es necesario"""
         logger.info("📊 Configurando modelo de pose estimation...")
         
         try:
@@ -147,21 +147,30 @@ class OptimizedTRTPoseProcessor:
             pytorch_path = self.model_paths.get('pytorch_model', '')
             topology_path = self.model_paths.get('topology', '')
             
+            # Verificar archivo de topología primero
+            if not os.path.exists(topology_path):
+                logger.error("Archivo de topología no encontrado: %s", topology_path)
+                return False
+            
+            # Verificar modelo TensorRT
             if os.path.exists(tensorrt_path):
-                logger.info("Usando modelo TensorRT preoptimizado")
+                logger.info("✅ Modelo TensorRT encontrado")
                 use_tensorrt = True
                 model_path = tensorrt_path
             elif os.path.exists(pytorch_path):
-                logger.info("Modelo TensorRT no encontrado, usando PyTorch")
-                use_tensorrt = False
-                model_path = pytorch_path
+                logger.info("⚡ Modelo TensorRT no encontrado, iniciando conversión automática...")
+                
+                # Ejecutar conversión automática
+                if self._convert_pytorch_to_tensorrt():
+                    logger.info("✅ Conversión completada, usando modelo TensorRT")
+                    use_tensorrt = True
+                    model_path = tensorrt_path
+                else:
+                    logger.warning("⚠️ Conversión falló, usando modelo PyTorch")
+                    use_tensorrt = False
+                    model_path = pytorch_path
             else:
                 logger.error("No se encontró ningún modelo válido")
-                return False
-                
-            # Verificar archivo de topología
-            if not os.path.exists(topology_path):
-                logger.error("Archivo de topología no encontrado: %s", topology_path)
                 return False
                 
             # Importar y inicializar procesador
@@ -178,6 +187,42 @@ class OptimizedTRTPoseProcessor:
             
         except Exception as e:
             logger.error("❌ Error configurando modelo: %s", str(e))
+            return False
+            
+    def _convert_pytorch_to_tensorrt(self):
+        """Ejecuta la conversión PyTorch a TensorRT automáticamente"""
+        logger.info("🔄 Iniciando conversión automática PyTorch → TensorRT...")
+        
+        try:
+            # Importar el convertidor
+            import subprocess
+            import sys
+            
+            # Ejecutar script de conversión
+            result = subprocess.run([
+                sys.executable, 'convert_model_to_tensorrt.py'
+            ], capture_output=True, text=True, timeout=1800)  # 30 minutos máximo
+            
+            if result.returncode == 0:
+                logger.info("✅ Conversión automática exitosa")
+                
+                # Verificar que el archivo se creó
+                tensorrt_path = self.model_paths.get('tensorrt_model', '')
+                if os.path.exists(tensorrt_path):
+                    return True
+                else:
+                    logger.error("❌ Archivo TensorRT no se creó correctamente")
+                    return False
+            else:
+                logger.error("❌ Error en conversión automática:")
+                logger.error(result.stderr)
+                return False
+                
+        except subprocess.TimeoutExpired:
+            logger.error("❌ Conversión automática expiró (>30 min)")
+            return False
+        except Exception as e:
+            logger.error("❌ Error ejecutando conversión automática: %s", str(e))
             return False
             
     def _setup_video_capture(self, input_path):
