@@ -1,5 +1,6 @@
 import os
 import sys
+import subprocess
 import time
 import psutil
 import resource
@@ -15,121 +16,95 @@ try:
 except ImportError:
     NVML_AVAILABLE = False
 
-import torch
-from torch2trt import torch2trt
-
 # --- Argument parsing ---
-parser = argparse.ArgumentParser(description='Monitor and convert TRT_Pose model via torch2trt on Jetson Nano')
+parser = argparse.ArgumentParser(description='Convert PyTorch .pth to TensorRT .engine with resource monitoring')
 parser.add_argument('--checkpoint-path', '-c', required=True,
                     help='Path to the PyTorch .pth checkpoint file')
 parser.add_argument('--engine-path', '-e', required=True,
-                    help='Output path for the TensorRT .engine file')
-parser.add_argument('--model-class', '-m', required=True,
-                    help='Python path to model class, e.g. mymodule.ResNet18Pose')
+                    help='Output path for the TensorRT engine file')
+parser.add_argument('--converter-script', default='trt_pose/converter.py',
+                    help='Path to trt_pose converter.py script')
+parser.add_argument('--model', default='resnet18_baseline_att',
+                    help='Model name for trt_pose converter')
 parser.add_argument('--input-shape', nargs=4, type=int, metavar=('N','C','H','W'),
                     default=[1,3,224,224],
-                    help='Input tensor shape for the model')
-parser.add_argument('--precision', choices=['fp16','fp32'], default='fp16',
-                    help='Precision mode for TensorRT engine')
-parser.add_argument('--max-workspace-size', type=int, default=1<<28,
-                    help='Max workspace size in bytes')
+                    help='Input tensor shape')
+parser.add_argument('--precision', choices=['fp16','fp32','int8'], default='fp16',
+                    help='Precision mode')
+parser.add_argument('--max-workspace-size', type=int, default=1<<30,
+                    help='Max workspace size (bytes)')
 parser.add_argument('--swap-file', default='/swapfile',
-                    help='Path to swapfile')
+                    help='Swap file path')
 parser.add_argument('--swap-size-gb', type=int, default=2,
-                    help='Size of swap in GB')
+                    help='Swap size (GB)')
 parser.add_argument('--monitor-interval', type=int, default=5,
                     help='Seconds between resource checks')
 parser.add_argument('--memory-margin', type=float, default=0.1,
-                    help='Minimum fraction of RAM to keep free')
+                    help='Min free RAM fraction')
 parser.add_argument('--gpu-memory-margin', type=float, default=0.1,
-                    help='Minimum fraction of GPU memory to keep free')
+                    help='Min free GPU memory fraction')
 parser.add_argument('--max-ram-limit', type=int, default=None,
-                    help='Limit for process memory (bytes), None for no limit')
+                    help='Max RAM for process (bytes)')
 args = parser.parse_args()
 
-# --- Configuration ---
-SWAP_FILE = args.swap_file
-SWAP_SIZE_GB = args.swap_size_gb
-MEMORY_MARGIN = args.memory_margin
-GPU_MEMORY_MARGIN = args.gpu_memory_margin
-MONITOR_INTERVAL = args.monitor_interval
-MAX_RAM_LIMIT = args.max_ram_limit
+# Build conversion command
+convert_cmd = [
+    sys.executable, args.converter_script,
+    '--model', args.model,
+    '--input-shape'] + [str(x) for x in args.input_shape] + [
+    '--checkpoint-path', args.checkpoint_path,
+    '--engine-path', args.engine_path,
+    '--precision', args.precision,
+    '--max_workspace_size', str(args.max_workspace_size)
+]
 
 # --- Functions ---
-def ensure_swap(file_path, size_gb):
-    if os.path.exists(file_path): return
-    size_bytes = size_gb * (1 << 30)
-    os.system(f"sudo fallocate -l {size_bytes} {file_path} && sudo chmod 600 {file_path} && sudo mkswap {file_path} && sudo swapon {file_path}")
-    print(f"Swap file '{file_path}' of size {size_gb}GB activated.")
+def ensure_swap(path, gb):
+    if os.path.exists(path): return
+    size = gb * (1<<30)
+    os.system(f"sudo fallocate -l {size} {path} && sudo chmod 600 {path} && sudo mkswap {path} && sudo swapon {path}")
+    print(f"Swap {gb}GB activated at {path}")
 
 
-def get_system_usage():
+def get_usage():
     vm = psutil.virtual_memory()
-    usage = {
-        'ram_used': vm.used,
-        'ram_total': vm.total,
-        'ram_free_ratio': vm.available / vm.total
-    }
+    usage = {'ram_free_ratio': vm.available/vm.total}
     if NVML_AVAILABLE:
         try:
-            handle = nvmlDeviceGetHandleByIndex(0)
-            mem = nvmlDeviceGetMemoryInfo(handle)
-            usage.update({
-                'gpu_used': mem.used,
-                'gpu_total': mem.total,
-                'gpu_free_ratio': (mem.total-mem.used)/mem.total
-            })
+            h = nvmlDeviceGetHandleByIndex(0)
+            m = nvmlDeviceGetMemoryInfo(h)
+            usage['gpu_free_ratio'] = (m.total-m.used)/m.total
         except:
             pass
     return usage
 
 
-def set_memory_limit(limit_bytes):
-    resource.setrlimit(resource.RLIMIT_AS, (limit_bytes, limit_bytes))
-    print(f"Process memory limit set to {limit_bytes/(1<<20):.1f} MB.")
+def set_limit(limit):
+    resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+    print(f"RAM limit {limit/(1<<20):.1f}MB")
 
-# --- Main flow ---
+# --- Main ---
 if __name__ == '__main__':
-    ensure_swap(SWAP_FILE, SWAP_SIZE_GB)
-    if MAX_RAM_LIMIT:
-        set_memory_limit(MAX_RAM_LIMIT)
+    ensure_swap(args.swap_file, args.swap_size_gb)
+    if args.max_ram_limit:
+        set_limit(args.max_ram_limit)
 
-    # Load model
-    module_name, class_name = args.model_class.rsplit('.', 1)
-    mod = __import__(module_name, fromlist=[class_name])
-    ModelClass = getattr(mod, class_name)
-    model = ModelClass()
-    model.load_state_dict(torch.load(args.checkpoint_path))
-    model.eval().cuda()
+    print("Starting conversion...")
+    p = subprocess.Popen(convert_cmd)
 
-    # Dummy input
-    input_shape = tuple(args.input_shape)
-    dummy = torch.randn(input_shape).cuda()
-
-    # Conversion with torch2trt
-    print("Starting torch2trt conversion...")
-    start = time.time()
-    if args.precision == 'fp16':
-        model_trt = torch2trt(model, [dummy], fp16_mode=True,
-                               max_workspace_size=args.max_workspace_size)
-    else:
-        model_trt = torch2trt(model, [dummy], fp16_mode=False,
-                               max_workspace_size=args.max_workspace_size)
-    torch.save(model_trt.state_dict(), args.engine_path)
-    print(f"Conversion finished in {time.time()-start:.1f}s, saved to {args.engine_path}.")
-
-    # Monitoring loop
-    print("Entering resource monitor (Ctrl+C to exit)")
     try:
-        while True:
-            u = get_system_usage()
-            print(f"RAM {u['ram_used']/(1<<30):.2f}/{u['ram_total']/(1<<30):.2f} GB free {u['ram_free_ratio']:.2%}")
+        while p.poll() is None:
+            u = get_usage()
+            print(f"Free RAM {u['ram_free_ratio']:.2%}", end='')
             if 'gpu_free_ratio' in u:
-                print(f"GPU free {u['gpu_free_ratio']:.2%}")
-            if u['ram_free_ratio'] < MEMORY_MARGIN:
-                print("[Warning] Low RAM")
-            if 'gpu_free_ratio' in u and u['gpu_free_ratio'] < GPU_MEMORY_MARGIN:
-                print("[Warning] Low GPU mem")
-            time.sleep(MONITOR_INTERVAL)
+                print(f" | Free GPU {u['gpu_free_ratio']:.2%}")
+            else:
+                print()
+            if u['ram_free_ratio'] < args.memory_margin:
+                print("Warn: low RAM")
+            if 'gpu_free_ratio' in u and u['gpu_free_ratio'] < args.gpu_memory_margin:
+                print("Warn: low GPU")
+            time.sleep(args.monitor_interval)
     except KeyboardInterrupt:
-        print("Monitoring stopped.")
+        p.terminate()
+    print("Done.")
