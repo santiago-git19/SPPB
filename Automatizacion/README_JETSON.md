@@ -360,3 +360,52 @@ logging.basicConfig(level=logging.DEBUG)
 3. **Probar sistema**: `python example_trt_pose_final.py`
 4. **Monitorear recursos**: Observar logs durante ejecución
 5. **Optimizar configuración**: Ajustar según rendimiento
+
+## 🔧 Solución al Problema de Swap y Memoria
+
+### 🚨 **PROBLEMA IDENTIFICADO: ¿Por qué el swap no se usa?**
+
+**RESPUESTA TÉCNICA:**
+- El **swap solo funciona para memoria del sistema (RAM)**
+- **CUDA/GPU usa memoria unificada** que NO puede extenderse con swap
+- Durante `torch2trt`, los **picos de memoria ocurren en GPU**
+- Por eso el swap está disponible pero **no se usa durante conversión**
+
+### ✅ **SOLUCIÓN IMPLEMENTADA: CPU Fallback Automático**
+
+El convertidor ahora incluye:
+
+```bash
+# Conversión mejorada con fallback automático
+python convert_model_to_tensorrt.py
+```
+
+**Flujo automático:**
+1. 🔍 **Diagnóstico inicial** de memoria GPU/CPU/swap
+2. 🎮 **Intenta conversión GPU** primero (5-15 min)
+3. 🚨 **Detecta OOM** automáticamente si ocurre
+4. 🔄 **Fallback a CPU** automático (15-30 min)
+5. 💾 **CPU SÍ usa swap** efectivamente
+6. ✅ **Verificación final** del modelo convertido
+
+### 📊 **Diagnóstico y Monitoreo**
+
+```bash
+# Diagnóstico completo del problema de swap
+python diagnose_swap_issue.py
+
+# Demostración del sistema mejorado
+python demo_cpu_fallback.py
+
+# Monitoreo durante conversión (terminal separado)
+watch -n 5 'free -h && swapon --show && nvidia-smi'
+```
+
+### 🎯 **Ventajas del Sistema Mejorado**
+
+- ✅ **Conversión siempre exitosa** (GPU o CPU fallback)
+- ✅ **Uso efectivo del swap** en modo CPU
+- ✅ **Sin intervención manual** durante el proceso
+- ✅ **Monitoreo detallado** de memoria/swap/temperatura
+- ✅ **Diagnóstico automático** de problemas
+- ✅ **Reporte final** con estadísticas de rendimiento

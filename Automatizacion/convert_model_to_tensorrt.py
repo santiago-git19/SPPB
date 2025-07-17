@@ -254,16 +254,81 @@ class TensorRTModelConverter:
             return False
             
     def convert_to_tensorrt(self):
-        """Realiza la conversión a TensorRT con monitoreo"""
+        """Realiza la conversión a TensorRT con fallback automático CPU"""
         logger.info("⚡ Iniciando conversión PyTorch → TensorRT...")
         
+        # Diagnóstico inicial de memoria
+        self._diagnose_memory_limitations()
+        
+        try:
+            # Intentar conversión GPU primero
+            logger.info("🎯 Intentando conversión GPU...")
+            return self._convert_gpu()
+            
+        except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
+            if "out of memory" in str(e).lower():
+                logger.warning("💾 OOM en GPU detectado, usando fallback CPU...")
+                logger.warning("   Esto usará swap efectivamente pero será más lento...")
+                return self._convert_cpu_with_swap()
+            else:
+                logger.error("❌ Error no relacionado con memoria: %s", str(e))
+                raise e
+        except Exception as e:
+            logger.error("❌ Error inesperado durante conversión: %s", str(e))
+            return False
+    
+    def _diagnose_memory_limitations(self):
+        """Diagnóstica limitaciones específicas de memoria"""
+        logger.info("🔍 DIAGNÓSTICO DE MEMORIA JETSON NANO:")
+        
+        # Memoria total del sistema
+        mem_info = psutil.virtual_memory()
+        total_mem_gb = mem_info.total / (1024**3)
+        available_mem_gb = mem_info.available / (1024**3)
+        logger.info(f"   💾 RAM Total: {total_mem_gb:.1f} GB")
+        logger.info(f"   💾 RAM Disponible: {available_mem_gb:.1f} GB")
+        
+        # Memoria CUDA disponible
+        if torch.cuda.is_available():
+            total_cuda_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+            allocated_cuda_gb = torch.cuda.memory_allocated(0) / (1024**3)
+            cached_cuda_gb = torch.cuda.memory_reserved(0) / (1024**3)
+            free_cuda_gb = total_cuda_gb - cached_cuda_gb
+            
+            logger.info(f"   🎮 CUDA Total: {total_cuda_gb:.1f} GB")
+            logger.info(f"   🎮 CUDA Asignada: {allocated_cuda_gb:.1f} GB")
+            logger.info(f"   🎮 CUDA Cached: {cached_cuda_gb:.1f} GB")
+            logger.info(f"   🎮 CUDA Libre: {free_cuda_gb:.1f} GB")
+        
+        # Estado del swap
+        swap_info = psutil.swap_memory()
+        if swap_info.total > 0:
+            swap_total_gb = swap_info.total / (1024**3)
+            swap_used_gb = swap_info.used / (1024**3)
+            swap_free_gb = (swap_info.total - swap_info.used) / (1024**3)
+            logger.info(f"   🔄 Swap Total: {swap_total_gb:.1f} GB")
+            logger.info(f"   🔄 Swap Usado: {swap_used_gb:.1f} GB")
+            logger.info(f"   🔄 Swap Libre: {swap_free_gb:.1f} GB")
+        else:
+            logger.warning("   ⚠️ Sin swap configurado")
+        
+        # Recomendar estrategia
+        if available_mem_gb < 1.5:
+            logger.warning("💡 MEMORIA BAJA: Recomendado usar conversión CPU con swap")
+        elif free_cuda_gb < 0.5:
+            logger.warning("💡 GPU MEMORY BAJA: Conversión puede fallar, CPU fallback disponible")
+        else:
+            logger.info("💡 Memoria aparenta ser suficiente para conversión GPU")
+    
+    def _convert_gpu(self):
+        """Conversión estándar usando GPU"""
         try:
             # Verificar recursos antes de conversión
             stats = self.resource_monitor.get_current_stats()
             memory_percent = stats.get('memory', {}).get('percent', 0)
             temp = stats.get('temperature', 0)
             
-            logger.info("Estado inicial:")
+            logger.info("Estado inicial GPU:")
             logger.info("  Memoria: %.1f%%", memory_percent)
             logger.info("  Temperatura: %.1f°C", temp or 0)
             
@@ -278,14 +343,14 @@ class TensorRTModelConverter:
                 'strict_type_constraints': self.conversion_config['strict_type_constraints']
             }
             
-            logger.info("Parámetros de conversión:")
+            logger.info("Parámetros de conversión GPU:")
             for key, value in conversion_params.items():
                 logger.info("  %s: %s", key, value)
                 
             # Realizar conversión con monitoreo
             start_time = time.time()
             
-            logger.info("🔄 Ejecutando torch2trt...")
+            logger.info("🔄 Ejecutando torch2trt en GPU...")
             logger.info("   Esto puede tomar 5-15 minutos en Jetson Nano...")
             
             # Thread para monitoreo durante conversión
@@ -294,11 +359,14 @@ class TensorRTModelConverter:
             def monitor_conversion():
                 while conversion_active:
                     stats = self.resource_monitor.get_current_stats()
+                    swap_info = psutil.swap_memory()
                     elapsed = time.time() - start_time
-                    logger.info("⏱️ Conversión en progreso (%.1f min) - Memoria: %.1f%% - Temp: %.1f°C",
+                    
+                    logger.info("⏱️ Conversión GPU (%.1f min) - Memoria: %.1f%% - Temp: %.1f°C - Swap: %.1f%%",
                               elapsed/60, 
                               stats.get('memory', {}).get('percent', 0),
-                              stats.get('temperature', 0) or 0)
+                              stats.get('temperature', 0) or 0,
+                              swap_info.percent if swap_info.total > 0 else 0)
                     time.sleep(30)  # Log cada 30 segundos
                     
             monitor_thread = threading.Thread(target=monitor_conversion, daemon=True)
@@ -314,7 +382,7 @@ class TensorRTModelConverter:
                 conversion_active = False
                 
                 elapsed = time.time() - start_time
-                logger.info("✅ Conversión completada en %.1f minutos", elapsed/60)
+                logger.info("✅ Conversión GPU completada en %.1f minutos", elapsed/60)
                 
             except Exception as conversion_error:
                 conversion_active = False
@@ -328,8 +396,105 @@ class TensorRTModelConverter:
                 
             return True
             
+        except torch.cuda.OutOfMemoryError as e:
+            logger.error("💥 GPU Out of Memory: %s", str(e))
+            raise e
         except Exception as e:
-            logger.error("❌ Error durante conversión: %s", str(e))
+            logger.error("❌ Error durante conversión GPU: %s", str(e))
+            raise e
+    
+    def _convert_cpu_with_swap(self):
+        """Conversión en CPU que SÍ usa swap efectivamente"""
+        logger.info("🔄 INICIANDO CONVERSIÓN CPU (usa swap)...")
+        logger.warning("   ⏰ Esto será más lento (15-30 min) pero más estable")
+        
+        try:
+            # Limpiar GPU memory primero
+            self._emergency_memory_cleanup()
+            
+            # Mover modelo y datos a CPU
+            logger.info("📤 Moviendo modelo a CPU...")
+            self.model = self.model.cpu()
+            self.test_input = self.test_input.cpu()
+            
+            # Más limpieza después de mover a CPU
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            gc.collect()
+            
+            # Configurar parámetros para CPU
+            conversion_params = {
+                'fp16_mode': False,  # CPU no soporta FP16
+                'max_workspace_size': self.conversion_config['max_workspace_size'] * 2,  # Más workspace en CPU
+                'strict_type_constraints': self.conversion_config['strict_type_constraints']
+            }
+            
+            logger.info("Parámetros de conversión CPU:")
+            for key, value in conversion_params.items():
+                logger.info("  %s: %s", key, value)
+            
+            # Monitoreo específico para conversión CPU
+            start_time = time.time()
+            conversion_active = True
+            
+            def monitor_cpu_conversion():
+                initial_swap = psutil.swap_memory().used
+                while conversion_active:
+                    stats = self.resource_monitor.get_current_stats()
+                    swap_info = psutil.swap_memory()
+                    elapsed = time.time() - start_time
+                    swap_increase = (swap_info.used - initial_swap) / (1024**2)  # MB
+                    
+                    logger.info("⏱️ Conversión CPU (%.1f min) - RAM: %.1f%% - Swap: %.1f%% (+%.0f MB) - Temp: %.1f°C",
+                              elapsed/60,
+                              stats.get('memory', {}).get('percent', 0),
+                              swap_info.percent if swap_info.total > 0 else 0,
+                              swap_increase,
+                              stats.get('temperature', 0) or 0)
+                    
+                    if swap_increase > 100:  # Si está usando swap significativamente
+                        logger.info("✅ Swap siendo usado efectivamente")
+                    
+                    time.sleep(45)  # Más frecuente para CPU
+                    
+            monitor_thread = threading.Thread(target=monitor_cpu_conversion, daemon=True)
+            monitor_thread.start()
+            
+            # Conversión en CPU
+            logger.info("🔄 Ejecutando torch2trt en CPU...")
+            try:
+                self.model_trt = torch2trt.torch2trt(
+                    self.model,
+                    [self.test_input],
+                    **conversion_params
+                )
+                conversion_active = False
+                
+                elapsed = time.time() - start_time
+                logger.info("✅ Conversión CPU completada en %.1f minutos", elapsed/60)
+                
+            except Exception as conversion_error:
+                conversion_active = False
+                raise conversion_error
+            
+            # Verificar modelo en CPU
+            logger.info("🧪 Probando modelo TensorRT en CPU...")
+            with torch.no_grad():
+                trt_output = self.model_trt(self.test_input)
+                logger.info("✅ Inferencia TensorRT CPU exitosa")
+            
+            # Mover modelo final de vuelta a GPU para guardado
+            logger.info("📥 Moviendo modelo convertido a GPU para guardado...")
+            try:
+                self.model_trt = self.model_trt.cuda()
+                logger.info("✅ Modelo movido a GPU exitosamente")
+            except Exception as e:
+                logger.warning("⚠️ No se pudo mover a GPU, guardando en CPU: %s", str(e))
+            
+            return True
+            
+        except Exception as e:
+            logger.error("❌ Error durante conversión CPU: %s", str(e))
             return False
             
     def save_tensorrt_model(self):
