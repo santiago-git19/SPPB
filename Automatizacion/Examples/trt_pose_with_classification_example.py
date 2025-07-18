@@ -65,8 +65,9 @@ class TRTPoseWithClassifier:
         self.trt_pose_processor = TRTPoseProcessor(
             model_path=trt_pose_model_path,
             topology_path=pose_topology_path,
-            width=width,
-            height=height
+            False
+            #width=width,
+            #height=height
         )
         
         # Crear clasificador de poses
