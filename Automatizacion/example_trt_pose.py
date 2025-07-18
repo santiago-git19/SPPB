@@ -33,7 +33,7 @@ def main():
     try:
         # Inicializar el procesador TensorRT Pose
         print("Inicializando TRTPoseProcessor...")
-        processor = TRTPoseProcessor(pose_model_path, topology_path)
+        processor = TRTPoseProcessor(pose_model_path, topology_path, False)
         
         # Abrir video
         cap = cv2.VideoCapture(video_path)
