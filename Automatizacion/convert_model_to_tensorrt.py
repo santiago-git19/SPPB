@@ -74,7 +74,7 @@ class TensorRTModelConverter:
             'fp16_mode': True,
             'max_workspace_size': 1 << 20,  # 1MB (ultra conservador para 930MB RAM)
             'strict_type_constraints': True,
-            #'int8_mode': False,  # FP16 es suficiente para Jetson Nano
+            'int8_mode': False,  # FP16 es suficiente para Jetson Nano
             'minimum_segment_size': 3,  # Fusionar solo segmentos grandes
             'max_batch_size': 1,  # Máximo batch size
             'optimize_for_memory': True  # Priorizar memoria sobre velocidad
