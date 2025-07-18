@@ -23,6 +23,9 @@ import time
 import logging
 from pathlib import Path
 
+# Añadir el directorio 'Automatizacion' al sys.path
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+
 # Importar procesador existente de trt_pose y nuestro clasificador
 from utils.trt_pose_proc import TRTPoseProcessor
 from utils.trt_pose_classifier import TRTPoseClassifier, create_pose_classifier
