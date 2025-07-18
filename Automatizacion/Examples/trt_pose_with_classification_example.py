@@ -65,7 +65,7 @@ class TRTPoseWithClassifier:
         self.trt_pose_processor = TRTPoseProcessor(
             model_path=trt_pose_model_path,
             topology_path=pose_topology_path,
-            False
+            use_tensorrt= False
             #width=width,
             #height=height
         )
