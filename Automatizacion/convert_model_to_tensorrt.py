@@ -66,14 +66,18 @@ class TensorRTModelConverter:
             'backup_model': 'resnet18_baseline_att_224x224_A_epoch_249_trt_backup.pth'
         }
         
-        # Configuración de conversión
+        # Configuración de conversión optimizada para memoria limitada
         self.conversion_config = {
             'width': 224,
             'height': 224,
             'batch_size': 1,
             'fp16_mode': True,
-            'max_workspace_size': 1 << 22,  # 16MB (conservador para Jetson)
-            'strict_type_constraints': True
+            'max_workspace_size': 1 << 20,  # 1MB (ultra conservador para 930MB RAM)
+            'strict_type_constraints': True,
+            #'int8_mode': False,  # FP16 es suficiente para Jetson Nano
+            'minimum_segment_size': 3,  # Fusionar solo segmentos grandes
+            'max_batch_size': 1,  # Máximo batch size
+            'optimize_for_memory': True  # Priorizar memoria sobre velocidad
         }
         
         self._setup_alert_callbacks()
@@ -667,21 +671,162 @@ class TensorRTModelConverter:
             return False
         finally:
             self.cleanup_resources()
-
-def main():
-    """Función principal"""
-    print("⚡ Convertidor PyTorch → TensorRT - Jetson Nano")
-    print("=" * 60)
     
-    converter = TensorRTModelConverter()
-    
-    try:
-        success = converter.run_conversion()
-        return 0 if success else 1
-    except Exception as e:
-        logger.error("❌ Error crítico: %s", str(e))
-        return 1
-
-if __name__ == "__main__":
-    exit_code = main()
-    sys.exit(exit_code)
+    def _setup_aggressive_memory_management(self):
+        """Configuración agresiva de memoria para Jetson Nano con poca RAM"""
+        logger.info("🛠️ Configurando gestión agresiva de memoria...")
+        
+        # Variables de entorno para optimización de memoria
+        memory_env = {
+            'PYTORCH_CUDA_ALLOC_CONF': 'max_split_size_mb:16,garbage_collection_threshold:0.6',
+            'CUDA_LAUNCH_BLOCKING': '1',  # Sincronización para evitar acumulación
+            'TF_GPU_ALLOCATOR': 'cuda_malloc_async',  # Allocator optimizado
+            'TRT_LOGGER_VERBOSITY': '0',  # Reducir verbosidad para ahorrar memoria
+            'CUBLAS_WORKSPACE_CONFIG': ':16:8',  # Limitar workspace de cuBLAS
+        }
+        
+        for key, value in memory_env.items():
+            os.environ[key] = value
+            logger.info(f"✅ {key}={value}")
+            
+        # Configurar PyTorch para uso mínimo de memoria
+        if torch.cuda.is_available():
+            torch.backends.cudnn.benchmark = False  # Evitar caching de kernels
+            torch.backends.cudnn.deterministic = True
+            
+            # Limitar memoria CUDA disponible
+            available_ram_mb = psutil.virtual_memory().available / (1024**2)
+            # Usar máximo 70% de RAM disponible para CUDA
+            cuda_memory_limit = min(int(available_ram_mb * 0.7), 1024)  # Max 1GB
+            
+            try:
+                torch.cuda.set_per_process_memory_fraction(cuda_memory_limit / 1024.0)
+                logger.info(f"✅ Límite CUDA: {cuda_memory_limit} MB")
+            except Exception as e:
+                logger.warning(f"⚠️ No se pudo limitar memoria CUDA: {e}")
+                
+    def _pre_conversion_memory_optimization(self):
+        """Optimizaciones de memoria antes de iniciar conversión"""
+        logger.info("🧹 Optimización de memoria pre-conversión...")
+        
+        # Limpiar cachés del sistema
+        try:
+            subprocess.run(['sudo', 'sync'], check=False)
+            subprocess.run(['sudo', 'sh', '-c', 'echo 3 > /proc/sys/vm/drop_caches'], check=False)
+            logger.info("✅ Cachés del sistema liberados")
+        except Exception as e:
+            logger.warning(f"⚠️ No se pudieron liberar cachés del sistema: {e}")
+            
+        # Garbage collection agresivo
+        for _ in range(3):
+            gc.collect()
+            
+        # Limpieza CUDA agresiva
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            torch.cuda.reset_peak_memory_stats()
+            
+        # Verificar memoria después de limpieza
+        memory = psutil.virtual_memory()
+        logger.info(f"💾 Memoria disponible tras limpieza: {memory.available / (1024**2):.0f} MB")
+        
+    def _adaptive_workspace_size(self):
+        """Calcula el workspace size óptimo basado en memoria disponible"""
+        available_ram_mb = psutil.virtual_memory().available / (1024**2)
+        
+        # Usar máximo 1% de RAM disponible para workspace, con límites
+        workspace_mb = max(1, min(4, int(available_ram_mb * 0.01)))
+        workspace_bytes = workspace_mb * 1024 * 1024
+        
+        logger.info(f"🎯 Workspace calculado: {workspace_mb} MB ({available_ram_mb:.0f} MB disponibles)")
+        
+        # Actualizar configuración
+        self.conversion_config['max_workspace_size'] = workspace_bytes
+        return workspace_bytes
+        
+    def _validate_memory_requirements(self):
+        """Valida si hay suficiente memoria para la conversión"""
+        memory = psutil.virtual_memory()
+        available_mb = memory.available / (1024**2)
+        
+        # Estimar memoria necesaria
+        model_size_mb = 50  # ResNet18 base ~50MB
+        conversion_overhead = 4  # Factor de overhead durante conversión
+        minimum_required_mb = model_size_mb * conversion_overhead
+        
+        logger.info(f"📊 Análisis de memoria:")
+        logger.info(f"   Disponible: {available_mb:.0f} MB")
+        logger.info(f"   Requerido estimado: {minimum_required_mb:.0f} MB")
+        
+        if available_mb < minimum_required_mb:
+            logger.error(f"❌ Memoria insuficiente: {available_mb:.0f} < {minimum_required_mb:.0f} MB")
+            return False
+            
+        # Verificar swap si está disponible
+        swap = psutil.swap_memory()
+        if swap.total > 0:
+            total_virtual_mb = available_mb + (swap.free / (1024**2))
+            logger.info(f"   Total virtual (RAM+Swap): {total_virtual_mb:.0f} MB")
+            
+        return True
+        
+    def _create_model_with_memory_monitoring(self):
+        """Crea modelo con monitoreo intensivo de memoria"""
+        logger.info("🏗️ Creando modelo con monitoreo de memoria...")
+        
+        # Monitorear memoria antes
+        initial_memory = psutil.virtual_memory()
+        logger.info(f"💾 Memoria inicial: {initial_memory.available / (1024**2):.0f} MB disponible")
+        
+        try:
+            # Crear modelo paso a paso para detectar problemas de memoria
+            logger.info("📐 Creando arquitectura del modelo...")
+            self.model = trt_pose.models.resnet18_baseline_att(
+                self.num_parts, 2 * self.num_links
+            )
+            
+            # Verificar memoria después de crear arquitectura
+            arch_memory = psutil.virtual_memory()
+            arch_used = (initial_memory.available - arch_memory.available) / (1024**2)
+            logger.info(f"💾 Memoria usada por arquitectura: {arch_used:.1f} MB")
+            
+            # Mover a GPU con monitoreo
+            logger.info("🎮 Moviendo modelo a GPU...")
+            self.model = self.model.cuda()
+            
+            gpu_memory = psutil.virtual_memory()
+            gpu_used = (arch_memory.available - gpu_memory.available) / (1024**2)
+            logger.info(f"💾 Memoria usada por GPU transfer: {gpu_used:.1f} MB")
+            
+            # Poner en modo evaluación
+            self.model.eval()
+            
+            # Cargar pesos con monitoreo
+            logger.info("📥 Cargando pesos...")
+            checkpoint = torch.load(
+                self.model_config['pytorch_model'], 
+                map_location='cuda:0',
+                weights_only=True  # Más seguro y eficiente
+            )
+            
+            self.model.load_state_dict(checkpoint)
+            del checkpoint  # Liberar inmediatamente
+            gc.collect()
+            
+            # Verificar memoria final
+            final_memory = psutil.virtual_memory()
+            total_used = (initial_memory.available - final_memory.available) / (1024**2)
+            logger.info(f"💾 Memoria total usada por modelo: {total_used:.1f} MB")
+            logger.info(f"💾 Memoria restante: {final_memory.available / (1024**2):.0f} MB")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Error creando modelo: {e}")
+            # Limpieza en caso de error
+            if hasattr(self, 'model'):
+                del self.model
+            torch.cuda.empty_cache()
+            gc.collect()
+            return False
