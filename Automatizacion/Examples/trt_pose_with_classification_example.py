@@ -23,6 +23,8 @@ import time
 import logging
 from pathlib import Path
 
+import sys
+from pathlib import Path
 # Añadir el directorio 'Automatizacion' al sys.path
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
