@@ -27,7 +27,7 @@ import torch2trt                                      # Utilidad para convertir 
 
 # Convertir el modelo PyTorch a TensorRT (modo fp16)
 print("Iniciando conversión del modelo PyTorch a TensorRT...")
-model_trt = torch2trt.torch2trt(model, [data], fp16_mode=True, max_workspace_size=1<<25)
+model_trt = torch2trt.torch2trt(model, [data], fp16_mode=True, max_workspace_size=1<<24)
 print("Conversión completada.")
 
 OPTIMIZED_MODEL = 'resnet18_baseline_att_224x224_A_epoch_249_trt.pth'  # Archivo de salida con pesos optimizados

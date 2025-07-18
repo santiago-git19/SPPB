@@ -72,7 +72,7 @@ class TensorRTModelConverter:
             'height': 224,
             'batch_size': 1,
             'fp16_mode': True,
-            'max_workspace_size': 1 << 24,  # 16MB (conservador para Jetson)
+            'max_workspace_size': 1 << 22,  # 16MB (conservador para Jetson)
             'strict_type_constraints': True
         }
         
