@@ -14,7 +14,6 @@ Fecha: 2025
 
 import numpy as np
 import torch
-import onnxruntime as ort
 import logging
 import os
 import time
