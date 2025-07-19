@@ -287,8 +287,10 @@ class TRTPoseProcessor:
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         
         # Cargar topología
+        print("Cargando topología...")
         with open(topology_path, 'r') as f:
             self.human_pose = json.load(f)
+        print("Topología cargada.")
         
         self.topology = trt_pose.coco.coco_category_to_topology(self.human_pose)
         self.num_parts = len(self.human_pose['keypoints'])
@@ -301,6 +303,7 @@ class TRTPoseProcessor:
         self.std = torch.Tensor([0.229, 0.224, 0.225]).to(self.device)
         
         # Cargar modelo
+        print(f"Cargando modelo {model_path}...")
         self._load_model(model_path)
         
         print(f"Modelo cargado exitosamente en: {self.device}")

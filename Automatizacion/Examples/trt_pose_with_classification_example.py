@@ -65,16 +65,14 @@ class TRTPoseWithClassifier:
         self.trt_pose_processor = TRTPoseProcessor(
             model_path=trt_pose_model_path,
             topology_path=pose_topology_path,
-            use_tensorrt= False
-            #width=width,
-            #height=height
+            use_tensorrt=False
         )
         
         # Crear clasificador de poses
         self.pose_classifier = create_pose_classifier(
             model_path=pose_classifier_model_path,
             keypoint_format='coco',  # trt_pose usa formato similar a COCO
-            sequence_length=30,      # 1 segundo a 30fps
+            sequence_length=15,      # 1 segundo a 30fps
             confidence_threshold=0.3
         )
         
@@ -317,6 +315,7 @@ def main():
     
     try:
         # Crear sistema integrado
+        print("🔧 Inicializando sistema TRT Pose + Clasificación...")
         system = TRTPoseWithClassifier(
             trt_pose_model_path=config['trt_pose_model'],
             pose_topology_path=config['pose_topology'],

@@ -107,6 +107,7 @@ class TRTPoseClassifier:
         self.session = None
         self.input_name = None
         self.output_name = None
+        print(f"Cargando modelo {self.model_path}...")
         self._load_model()
         
         # Estadísticas
@@ -123,16 +124,28 @@ class TRTPoseClassifier:
         logger.info(f"   🎭 Clases: {self.POSE_CLASSES}")
         
     def _load_model(self):
-        """Carga el modelo engine de PoseClassificationNet"""
+        """Carga el modelo engine de PoseClassificationNet con optimizaciones"""
         try:
             if not os.path.exists(self.model_path):
                 raise FileNotFoundError(f"Modelo no encontrado: {self.model_path}")
             
-            # Configurar sesión engine con optimizaciones
-            providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
+            # Configurar opciones de sesión
             session_options = ort.SessionOptions()
             session_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+            session_options.enable_mem_pattern = True #
+            session_options.enable_cpu_mem_arena = True
+            session_options.execution_mode = ort.ExecutionMode.ORT_PARALLEL # Modo paralelo/secuencial
+            session_options.intra_op_num_threads = 3  # Número de hilos para operaciones internas, ajustar según hardware (Jetson Nano puede ser 2-4 (4 máximo))
             
+            # Configurar proveedores
+            available_providers = ort.get_available_providers()
+            if 'CUDAExecutionProvider' in available_providers:
+                providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
+            else:
+                logger.warning("⚠️ CUDAExecutionProvider no está disponible. Usando CPUExecutionProvider.")
+                providers = ['CPUExecutionProvider']
+            
+            # Crear sesión de inferencia
             self.session = ort.InferenceSession(
                 self.model_path,
                 sess_options=session_options,
@@ -148,9 +161,10 @@ class TRTPoseClassifier:
             logger.info(f"✅ Modelo cargado: {os.path.basename(self.model_path)}")
             logger.info(f"   📐 Forma entrada esperada: {input_shape}")
             logger.info(f"   🔧 Proveedores: {self.session.get_providers()}")
-            
+        
         except Exception as e:
             logger.error(f"❌ Error cargando modelo: {e}")
+            logger.error("💡 Verifica que el modelo sea compatible con ONNX Runtime y los proveedores configurados.")
             raise
     
     def _convert_keypoints_format(self, keypoints: np.ndarray) -> np.ndarray:
