@@ -4,8 +4,22 @@ import numpy as np
 from ..utils.phase_base import PhaseBase, FullRestartRequested
 
 class ChairRisePhase(PhaseBase):
-    def __init__(self, openpose, config):
-        super().__init__(openpose, config)
+    def __init__(self, pose_processor, pose_classifier, config):
+        """
+        Inicializa la fase de Chair Rise con procesadores TRT Pose centralizados
+        
+        Args:
+            pose_processor: Instancia de TRTPoseProcessor (reutilizada)
+            pose_classifier: Instancia de TRTPoseClassifier (reutilizada)
+            config: Configuración del sistema
+        """
+        super().__init__(None, config)  # No usar openpose
+        
+        # === PROCESADORES CENTRALIZADOS ===
+        self.pose_processor = pose_processor
+        self.pose_classifier = pose_classifier
+        
+        print("✅ ChairRisePhase inicializada con procesadores TRT Pose centralizados")
 
     def reset_test(self):
         """
@@ -15,9 +29,14 @@ class ChairRisePhase(PhaseBase):
         # Reiniciar cualquier estado específico de chair rise
         print("Estado de Chair Rise reiniciado.")
 
-    def run(self, cap):
+    def run(self, cap_frontal, cap_lateral):
         """
         Método principal que ejecuta la prueba con capacidad de reinicio y reinicio global.
+        
+        Args:
+            cap_frontal: Captura de video de la cámara frontal
+            cap_lateral: Captura de video de la cámara lateral (puede ser None)
+        """
         """
         return self.run_test_with_global_restart(cap)
 

@@ -3,8 +3,22 @@ import cv2
 from ..utils.phase_base import PhaseBase, FullRestartRequested
 
 class BalancePhase(PhaseBase):
-    def __init__(self, openpose, config):
-        super().__init__(openpose, config)
+    def __init__(self, pose_processor, pose_classifier, config):
+        """
+        Inicializa la fase de Balance con procesadores TRT Pose centralizados
+        
+        Args:
+            pose_processor: Instancia de TRTPoseProcessor (reutilizada)
+            pose_classifier: Instancia de TRTPoseClassifier (reutilizada)
+            config: Configuración del sistema
+        """
+        super().__init__(None, config)  # No usar openpose
+        
+        # === PROCESADORES CENTRALIZADOS ===
+        self.pose_processor = pose_processor
+        self.pose_classifier = pose_classifier
+        
+        print("✅ BalancePhase inicializada con procesadores TRT Pose centralizados")
 
     def reset_test(self):
         """
@@ -14,9 +28,14 @@ class BalancePhase(PhaseBase):
         # Reiniciar cualquier estado específico de balance
         print("Estado de Balance reiniciado.")
 
-    def run(self, cap, camera_id, duration):
+    def run(self, cap_frontal, cap_lateral, duration):
         """
         Método principal que ejecuta la prueba con capacidad de reinicio y reinicio global.
+        
+        Args:
+            cap_frontal: Captura de video de la cámara frontal
+            cap_lateral: Captura de video de la cámara lateral (puede ser None)
+            duration: Duración de la prueba en segundos
         """
         return self.run_test_with_global_restart(cap, camera_id, duration)
 

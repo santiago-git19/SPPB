@@ -369,6 +369,8 @@ class TRTPoseProcessor:
             keypoints: Lista de keypoints detectados
         """
         with torch.no_grad():
+            original_shape = frame.shape[:2]
+
             # Preprocesar imagen
             input_tensor = self.preprocess_image(frame)
             
@@ -376,8 +378,8 @@ class TRTPoseProcessor:
             cmap, paf = self.model(input_tensor)
             
             # Postprocesar resultados
-            keypoints = self.postprocess_results(cmap, paf, frame.shape[:2])
-            
+            keypoints = self.postprocess_results(cmap, paf, original_shape)
+
             return keypoints
     
     def postprocess_results(self, cmap, paf, original_shape):
