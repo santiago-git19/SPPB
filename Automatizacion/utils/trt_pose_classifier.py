@@ -20,6 +20,7 @@ import time
 from collections import deque
 from typing import List, Tuple, Dict, Optional, Union
 import json
+import onnxruntime as ort
 
 # Configurar logging
 logger = logging.getLogger(__name__)
