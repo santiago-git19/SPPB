@@ -20,7 +20,9 @@ import time
 from collections import deque
 from typing import List, Tuple, Dict, Optional, Union
 import json
-import onnxruntime as ort
+import tensorrt as trt
+import pycuda.driver as cuda
+import pycuda.autoinit
 
 # Configurar logging
 logger = logging.getLogger(__name__)
@@ -104,11 +106,20 @@ class TRTPoseClassifier:
         # Buffer para secuencias temporales
         self.sequence_buffer = deque(maxlen=sequence_length)
         
-        # Cargar modelo
-        self.session = None
-        self.input_name = None
-        self.output_name = None
-        print(f"Cargando modelo {self.model_path}...")
+        # Variables TensorRT
+        self.engine = None
+        self.context = None
+        self.runtime = None
+        self.input_binding = None
+        self.output_binding = None
+        self.d_input = None  # Memoria GPU para entrada
+        self.d_output = None  # Memoria GPU para salida
+        self.input_shape = None
+        self.output_shape = None
+        self.input_size = None
+        self.output_size = None
+        
+        print(f"Cargando modelo TensorRT {self.model_path}...")
         self._load_model()
         
         # Estadísticas
@@ -125,47 +136,61 @@ class TRTPoseClassifier:
         logger.info(f"   🎭 Clases: {self.POSE_CLASSES}")
         
     def _load_model(self):
-        """Carga el modelo engine de PoseClassificationNet con optimizaciones"""
+        """Carga el modelo TensorRT .engine"""
         try:
+            import pycuda.driver as cuda
+            import tensorrt as trt
+            
+            # Verificar que el archivo existe
             if not os.path.exists(self.model_path):
                 raise FileNotFoundError(f"Modelo no encontrado: {self.model_path}")
             
-            # Configurar opciones de sesión
-            session_options = ort.SessionOptions()
-            session_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-            session_options.enable_mem_pattern = True #
-            session_options.enable_cpu_mem_arena = True
-            session_options.execution_mode = ort.ExecutionMode.ORT_PARALLEL # Modo paralelo/secuencial
-            session_options.intra_op_num_threads = 3  # Número de hilos para operaciones internas, ajustar según hardware (Jetson Nano puede ser 2-4 (4 máximo))
+            # Inicializar CUDA
+            cuda.init()
             
-            # Configurar proveedores
-            available_providers = ort.get_available_providers()
-            if 'CUDAExecutionProvider' in available_providers:
-                providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
-            else:
-                logger.warning("⚠️ CUDAExecutionProvider no está disponible. Usando CPUExecutionProvider.")
-                providers = ['CPUExecutionProvider']
+            # Cargar el archivo engine
+            with open(self.model_path, 'rb') as f:
+                engine_data = f.read()
             
-            # Crear sesión de inferencia
-            self.session = ort.InferenceSession(
-                self.model_path,
-                sess_options=session_options,
-                providers=providers
-            )
+            # Crear runtime TensorRT
+            trt_logger = trt.Logger(trt.Logger.WARNING)
+            self.runtime = trt.Runtime(trt_logger)
             
-            # Obtener nombres de entrada y salida
-            self.input_name = self.session.get_inputs()[0].name
-            self.output_name = self.session.get_outputs()[0].name
+            # Deserializar el engine
+            self.engine = self.runtime.deserialize_cuda_engine(engine_data)
             
-            # Verificar dimensiones esperadas
-            input_shape = self.session.get_inputs()[0].shape
-            logger.info(f"✅ Modelo cargado: {os.path.basename(self.model_path)}")
-            logger.info(f"   📐 Forma entrada esperada: {input_shape}")
-            logger.info(f"   🔧 Proveedores: {self.session.get_providers()}")
-        
+            if self.engine is None:
+                raise RuntimeError("Error al deserializar el engine TensorRT")
+            
+            # Crear contexto de ejecución
+            self.context = self.engine.create_execution_context()
+            
+            # Obtener información de los bindings
+            for i in range(self.engine.num_bindings):
+                if self.engine.binding_is_input(i):
+                    self.input_binding = i
+                    self.input_shape = self.engine.get_binding_shape(i)
+                    self.input_size = trt.volume(self.input_shape)
+                else:
+                    self.output_binding = i
+                    self.output_shape = self.engine.get_binding_shape(i)
+                    self.output_size = trt.volume(self.output_shape)
+            
+            # Alocar memoria GPU
+            self.d_input = cuda.mem_alloc(self.input_size * np.dtype(np.float32).itemsize)
+            self.d_output = cuda.mem_alloc(self.output_size * np.dtype(np.float32).itemsize)
+            
+            logger.info(f"✅ Modelo TensorRT cargado: {os.path.basename(self.model_path)}")
+            logger.info(f"   📐 Forma entrada: {self.input_shape}")
+            logger.info(f"   � Forma salida: {self.output_shape}")
+            
+        except ImportError as e:
+            logger.error(f"❌ Error de importación: {e}")
+            logger.error("💡 Asegúrese de que TensorRT y PyCUDA estén instalados correctamente")
+            raise
         except Exception as e:
-            logger.error(f"❌ Error cargando modelo: {e}")
-            logger.error("💡 Verifica que el modelo sea compatible con ONNX Runtime y los proveedores configurados.")
+            logger.error(f"❌ Error cargando modelo TensorRT: {e}")
+            logger.error("💡 Verifica que el archivo .engine sea válido y compatible")
             raise
     
     def _convert_keypoints_format(self, keypoints: np.ndarray) -> np.ndarray:
@@ -341,29 +366,37 @@ class TRTPoseClassifier:
     
     def _classify_sequence(self) -> Dict:
         """
-        Clasifica la secuencia actual de keypoints
+        Clasifica la secuencia actual de keypoints usando TensorRT
         
         Returns:
             Diccionario con resultados de clasificación
         """
         try:
+            import pycuda.driver as cuda
+            
             # Crear tensor de entrada
             input_tensor = self._create_sequence_tensor()
             if input_tensor is None:
                 return self._create_empty_result()
             
-            # Ejecutar inferencia
+            # Ejecutar inferencia TensorRT
             start_time = time.time()
             
-            outputs = self.session.run(
-                [self.output_name],
-                {self.input_name: input_tensor}
-            )
+            # Copiar datos a GPU
+            cuda.memcpy_htod(self.d_input, input_tensor.astype(np.float32))
+            
+            # Ejecutar inferencia
+            bindings = [int(self.d_input), int(self.d_output)]
+            self.context.execute_v2(bindings)
+            
+            # Copiar resultado de GPU a CPU
+            h_output = np.empty(self.output_shape, dtype=np.float32)
+            cuda.memcpy_dtoh(h_output, self.d_output)
             
             inference_time = time.time() - start_time
             
             # Procesar salida
-            prediction_logits = outputs[0][0]  # Remover dimensión batch
+            prediction_logits = h_output.flatten()  # Aplanar si es necesario
             probabilities = self._softmax(prediction_logits)
             
             # Obtener clase predicha
@@ -390,12 +423,12 @@ class TRTPoseClassifier:
                 'timestamp': time.time()
             }
             
-            logger.debug(f"🎭 Clasificación: {predicted_class} ({confidence:.2f})")
+            logger.debug(f"🎭 Clasificación TensorRT: {predicted_class} ({confidence:.2f})")
             
             return result
             
         except Exception as e:
-            logger.error(f"❌ Error en clasificación: {e}")
+            logger.error(f"❌ Error en clasificación TensorRT: {e}")
             return self._create_empty_result()
     
     def _softmax(self, x: np.ndarray) -> np.ndarray:
@@ -469,6 +502,37 @@ class TRTPoseClassifier:
                 f"format={self.keypoint_format}, "
                 f"predictions={stats['total_predictions']}, "
                 f"confidence_rate={stats['confidence_rate']:.2f})")
+    
+    def cleanup(self):
+        """Libera la memoria GPU y limpia recursos TensorRT"""
+        try:
+            import pycuda.driver as cuda
+            
+            if hasattr(self, 'd_input') and self.d_input is not None:
+                self.d_input.free()
+                self.d_input = None
+                
+            if hasattr(self, 'd_output') and self.d_output is not None:
+                self.d_output.free()
+                self.d_output = None
+                
+            if hasattr(self, 'context') and self.context is not None:
+                self.context = None
+                
+            if hasattr(self, 'engine') and self.engine is not None:
+                self.engine = None
+                
+            if hasattr(self, 'runtime') and self.runtime is not None:
+                self.runtime = None
+                
+            logger.info("✅ Memoria GPU liberada correctamente")
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Error durante limpieza: {e}")
+    
+    def __del__(self):
+        """Destructor que asegura la limpieza de memoria"""
+        self.cleanup()
     
     def __repr__(self) -> str:
         return self.__str__()
