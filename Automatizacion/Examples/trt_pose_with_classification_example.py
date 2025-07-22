@@ -91,13 +91,6 @@ class TRTPoseWithClassifier:
     def process_frame_with_classification(self, image: np.ndarray) -> dict:
         """
         Procesa un frame completo: detección + clasificación
-        Usa el procesador existente TRTPoseProcessor
-        
-        Args:
-            image: Imagen BGR de OpenCV
-            
-        Returns:
-            Diccionario con resultados de detección y clasificación
         """
         frame_result = {
             'people_detected': 0,
@@ -110,27 +103,28 @@ class TRTPoseWithClassifier:
         
         try:
             # Usar el procesador existente para obtener keypoints
-            keypoints_list = self.trt_pose_processor.process_frame(image)
+            keypoints = self.trt_pose_processor.process_frame(image)  # ✅ Un solo array (17, 3)
             
-            # El procesador devuelve una lista de keypoints por persona
-            frame_result['people_detected'] = len(keypoints_list)
-            frame_result['keypoints_extracted'] = keypoints_list
-            
-            # Clasificar poses para cada persona detectada
-            for person_idx, keypoints in enumerate(keypoints_list):
+            # Verificar que los keypoints sean válidos
+            if keypoints is not None and isinstance(keypoints, np.ndarray):
+                # ✅ SOLUCIÓN: Es una sola persona, no una lista
+                frame_result['people_detected'] = 1
+                frame_result['keypoints_extracted'] = keypoints
+                
+                # Clasificar poses
                 classification_result = self.pose_classifier.process_keypoints(keypoints)
                 
                 if classification_result and not classification_result.get('error', False):
                     frame_result['pose_classifications'].append({
-                        'person_id': person_idx,
+                        'person_id': 0,
                         'pose_class': classification_result['predicted_class'],
                         'confidence': classification_result['confidence'],
                         'probabilities': classification_result['probabilities']
                     })
                     
                     self.stats['poses_classified'] += 1
-            
-            self.stats['poses_detected'] += len(keypoints_list)
+                
+                self.stats['poses_detected'] += 1
             
         except Exception as e:
             logger.error(f"❌ Error procesando frame: {e}")

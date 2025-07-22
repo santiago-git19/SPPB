@@ -422,8 +422,8 @@ class TRTPoseProcessor:
             peaks = self._find_peaks_improved(confidence_map, threshold)
             
             # Escalar coordenadas al tamaño original
-            for peak in peaks:
-                x, y, confidence = peak
+            if len(peaks)>0:
+                x, y, confidence = max(peaks, key=lambda p: p[2])
                 # Escalar las coordenadas correctamente
                 x_scaled = int(x * scale_x)
                 y_scaled = int(y * scale_y)
