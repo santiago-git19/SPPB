@@ -232,8 +232,9 @@ class TensorRTModelConverter:
             error_msg = str(e).lower()
             logger.error("💥 Error GPU estándar: %s", str(e))
             
-            # Verificar si es error de deconvolución específico
-            if "deconvolution" in error_msg or "kernel weights" in error_msg:
+            # Verificar si es error de deconvolución específico (incluyendo __len__ que aparece tras errores TRT)
+            deconv_indicators = ["deconvolution", "kernel weights", "__len__", "tensorrt", "trt"]
+            if any(indicator in error_msg for indicator in deconv_indicators):
                 logger.warning("🔧 Error de deconvolución detectado, probando estrategias alternativas...")
                 
                 # Estrategia 2: Conversión con configuración alternativa
