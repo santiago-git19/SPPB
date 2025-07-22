@@ -178,7 +178,7 @@ class TensorRTModelConverter:
                 self._emergency_memory_cleanup()
                 
             # Crear modelo
-            self.model = resnet18_baseline_att_224x224_A(
+            self.model = self.resnet18_baseline_att_224x224_A(
                 self.num_parts,
                 2 * self.num_links,
                 pretrained=False
