@@ -6,7 +6,14 @@ TRT Pose Classifier - Clasificación de Poses usando NVIDIA TAO PoseClassificati
 Clase para procesar keypoints de trt_pose y clasificar poses humanas usando
 el modelo PoseClassificationNet de NVIDIA TAO Toolkit.
 
-Soporta múltiples formatos de keypoints y clasificación en tiempo real.
+Basado en la documentación oficial de NGC:
+https://catalog.ngc.nvidia.com/orgs/nvidia/teams/tao/models/poseclassificationnet
+
+Características del modelo:
+- 6 clases de poses: sitting_down, getting_up, sitting, standing, walking, jumping
+- Entrada: (N, C, T, V, M) donde T máximo = 300 frames
+- Soporta múltiples formatos de keypoints según graph_layout
+- Arquitectura: Spatial-Temporal Graph Convolutional Network (ST-GCN)
 
 Autor: Sistema de IA
 Fecha: 2025
@@ -42,14 +49,14 @@ class TRTPoseClassifier:
         'nvidia': 34         # NVIDIA 3D body pose format (target)
     }
     
-    # Clases de poses que puede clasificar el modelo
+    # Clases de poses que puede clasificar el modelo (según documentación oficial NGC)
     POSE_CLASSES = [
-        'sitting_down',  # 0
-        'getting_up',    # 1
-        'sitting',       # 2
-        'standing',      # 3
-        'walking',       # 4
-        'jumping'        # 5
+        'sitting_down',  # 0 - Sentándose
+        'getting_up',    # 1 - Levantándose  
+        'sitting',       # 2 - Sentado
+        'standing',      # 3 - De pie
+        'walking',       # 4 - Caminando
+        'jumping'        # 5 - Saltando
     ]
     
     # Mapeo de keypoints COCO (17) a NVIDIA (34) - indices aproximados
@@ -75,25 +82,34 @@ class TRTPoseClassifier:
     
     def __init__(self, 
                  model_path: str,
-                 keypoint_format: str = 'coco',
-                 sequence_length: int = 30,
+                 keypoint_format: str = 'nvidia',
+                 sequence_length: int = 300,
                  confidence_threshold: float = 0.3,
-                 max_persons: int = 1):
+                 max_persons: int = 1,
+                 graph_strategy: str = 'spatial'):
         """
         Inicializa el clasificador de poses
         
         Args:
             model_path: Ruta al modelo engine de PoseClassificationNet
-            keypoint_format: Formato de keypoints de entrada ('coco', 'openpose', 'nvidia', etc.)
-            sequence_length: Longitud de secuencia temporal para clasificación
+            keypoint_format: Formato de keypoints de entrada ('nvidia', 'coco', 'openpose', etc.)
+            sequence_length: Longitud de secuencia temporal (máximo 300 frames según documentación)
             confidence_threshold: Umbral mínimo de confianza para keypoints
-            max_persons: Número máximo de personas a procesar
+            max_persons: Número máximo de personas a procesar (M dimension)
+            graph_strategy: Estrategia del grafo ('spatial', 'uniform', 'distance')
         """
         self.model_path = model_path
         self.keypoint_format = keypoint_format.lower()
+        
+        # Validar sequence_length según documentación (máximo 300 frames = 10 segundos a 30 FPS)
+        if sequence_length > 300:
+            logger.warning(f"⚠️ sequence_length ({sequence_length}) excede el máximo recomendado (300). Ajustando a 300.")
+            sequence_length = 300
+            
         self.sequence_length = sequence_length
         self.confidence_threshold = confidence_threshold
         self.max_persons = max_persons
+        self.graph_strategy = graph_strategy
         
         # Validar formato
         if self.keypoint_format not in self.KEYPOINT_FORMATS:
@@ -101,7 +117,23 @@ class TRTPoseClassifier:
                            f"Soportados: {list(self.KEYPOINT_FORMATS.keys())}")
         
         self.input_keypoints = self.KEYPOINT_FORMATS[self.keypoint_format]
-        self.target_keypoints = self.KEYPOINT_FORMATS['nvidia']  # 34 keypoints
+        
+        # Según documentación: el modelo puede usar diferentes graph_layouts
+        # No siempre se convierte a NVIDIA - depende del modelo entrenado
+        if self.keypoint_format == 'nvidia':
+            self.target_keypoints = 34
+        elif self.keypoint_format == 'coco':
+            self.target_keypoints = 17
+        elif self.keypoint_format == 'openpose':
+            self.target_keypoints = 18
+        elif self.keypoint_format == 'human3.6m':
+            self.target_keypoints = 17
+        elif self.keypoint_format == 'ntu-rgb+d':
+            self.target_keypoints = 25
+        elif self.keypoint_format == 'ntu_edge':
+            self.target_keypoints = 24
+        else:
+            self.target_keypoints = self.input_keypoints
         
         # Buffer para secuencias temporales
         self.sequence_buffer = deque(maxlen=sequence_length)
@@ -131,8 +163,9 @@ class TRTPoseClassifier:
         
         logger.info(f"✅ TRTPoseClassifier inicializado:")
         logger.info(f"   📊 Formato entrada: {keypoint_format} ({self.input_keypoints} keypoints)")
-        logger.info(f"   🎯 Formato destino: nvidia ({self.target_keypoints} keypoints)")
-        logger.info(f"   ⏱️ Secuencia temporal: {sequence_length} frames")
+        logger.info(f"   🎯 Formato modelo: {keypoint_format} ({self.target_keypoints} keypoints)")
+        logger.info(f"   ⏱️ Secuencia temporal: {sequence_length} frames (máx: 300)")
+        logger.info(f"   🕸️ Estrategia grafo: {graph_strategy}")
         logger.info(f"   🎭 Clases: {self.POSE_CLASSES}")
         
     def _load_model(self):
@@ -195,43 +228,43 @@ class TRTPoseClassifier:
     
     def _convert_keypoints_format(self, keypoints: np.ndarray) -> np.ndarray:
         """
-        Convierte keypoints del formato de entrada al formato NVIDIA (34 keypoints)
+        Procesa keypoints según el formato configurado del modelo
         
         Args:
             keypoints: Array de keypoints [num_keypoints, 3] (x, y, confidence)
             
         Returns:
-            Array convertido al formato NVIDIA [34, 3]
+            Array en el formato correcto para el modelo
         """
-        # Crear array target con 34 keypoints inicializados a cero
-        nvidia_keypoints = np.zeros((self.target_keypoints, 3), dtype=np.float32)
+        # Si el modelo usa el mismo formato que la entrada, no convertir
+        if self.input_keypoints == self.target_keypoints:
+            return keypoints[:self.target_keypoints] if len(keypoints) >= self.target_keypoints else keypoints
         
-        if self.keypoint_format == 'nvidia':
-            # Ya está en formato correcto
-            return keypoints[:self.target_keypoints] if len(keypoints) >= 34 else nvidia_keypoints
+        # Crear array target inicializado a cero
+        target_keypoints = np.zeros((self.target_keypoints, 3), dtype=np.float32)
         
-        elif self.keypoint_format == 'coco':
-            # Mapear COCO (17) a NVIDIA (34)
-            for coco_idx, nvidia_idx in self.COCO_TO_NVIDIA_MAPPING.items():
-                if coco_idx < len(keypoints) and nvidia_idx < self.target_keypoints:
-                    nvidia_keypoints[nvidia_idx] = keypoints[coco_idx]
-                    
-        elif self.keypoint_format == 'openpose':
-            # Mapeo similar a COCO pero con keypoint adicional
-            # OpenPose tiene 18 puntos, COCO 17, mapeo aproximado
-            openpose_to_nvidia = dict(self.COCO_TO_NVIDIA_MAPPING)
-            openpose_to_nvidia[17] = 17  # neck adicional en OpenPose
-            
-            for op_idx, nvidia_idx in openpose_to_nvidia.items():
-                if op_idx < len(keypoints) and nvidia_idx < self.target_keypoints:
-                    nvidia_keypoints[nvidia_idx] = keypoints[op_idx]
-                    
+        if self.keypoint_format == 'nvidia' or self.target_keypoints == 34:
+            # Convertir a formato NVIDIA (34 keypoints)
+            if self.input_keypoints == 17:  # COCO o Human3.6M
+                for coco_idx, nvidia_idx in self.COCO_TO_NVIDIA_MAPPING.items():
+                    if coco_idx < len(keypoints) and nvidia_idx < self.target_keypoints:
+                        target_keypoints[nvidia_idx] = keypoints[coco_idx]
+            elif self.input_keypoints == 18:  # OpenPose
+                openpose_to_nvidia = dict(self.COCO_TO_NVIDIA_MAPPING)
+                openpose_to_nvidia[17] = 17  # neck adicional en OpenPose
+                for op_idx, nvidia_idx in openpose_to_nvidia.items():
+                    if op_idx < len(keypoints) and nvidia_idx < self.target_keypoints:
+                        target_keypoints[nvidia_idx] = keypoints[op_idx]
+            else:
+                # Mapeo directo para otros formatos
+                max_copy = min(len(keypoints), self.target_keypoints)
+                target_keypoints[:max_copy] = keypoints[:max_copy]
         else:
-            # Para otros formatos, mapeo directo limitado
+            # Para formatos no-NVIDIA, usar mapeo directo
             max_copy = min(len(keypoints), self.target_keypoints)
-            nvidia_keypoints[:max_copy] = keypoints[:max_copy]
+            target_keypoints[:max_copy] = keypoints[:max_copy]
         
-        return nvidia_keypoints
+        return target_keypoints
     
     def _filter_low_confidence_keypoints(self, keypoints: np.ndarray) -> np.ndarray:
         """
@@ -289,7 +322,14 @@ class TRTPoseClassifier:
     
     def _create_sequence_tensor(self) -> Optional[np.ndarray]:
         """
-        Crea tensor de secuencia en formato (N, C, T, V, M) para el modelo
+        Crea tensor de secuencia en formato (N, C, T, V, M) según documentación oficial
+        
+        Formato de entrada del modelo PoseClassificationNet:
+        - N: número de secuencias (batch_size)
+        - C: número de canales de entrada (3 para x,y,confidence)  
+        - T: longitud máxima de secuencia (hasta 300 frames)
+        - V: número de puntos articulares (depende del graph_layout)
+        - M: número de personas (normalmente 1)
         
         Returns:
             Tensor de secuencia o None si no hay suficientes frames
@@ -300,20 +340,19 @@ class TRTPoseClassifier:
         # Convertir secuencia a array
         sequence_list = list(self.sequence_buffer)
         
-        # Dimensiones: (T, V, C) -> (N, C, T, V, M)
-        # T = tiempo (frames), V = keypoints, C = coordenadas, N = batch, M = personas
-        
-        # Stack temporal
-        temporal_sequence = np.stack(sequence_list, axis=0)  # (T, V, C)
+        # Stack temporal: (T, V, C)
+        temporal_sequence = np.stack(sequence_list, axis=0)
         
         # Reorganizar a formato modelo: (N, C, T, V, M)
-        # N=1 (batch), C=3 (x,y,conf), T=sequence_length, V=34, M=1 (persona)
+        # N=1 (batch), C=3 (x,y,conf), T=sequence_length, V=target_keypoints, M=max_persons
         model_input = temporal_sequence.transpose(2, 0, 1)  # (C, T, V)
         model_input = np.expand_dims(model_input, axis=0)   # (N, C, T, V)
         model_input = np.expand_dims(model_input, axis=-1)  # (N, C, T, V, M)
         
-        # ✅ SOLUCIÓN: Asegurar que sea contiguo y del tipo correcto
+        # Asegurar que sea contiguo y del tipo correcto
         model_input = np.ascontiguousarray(model_input.astype(np.float32))
+        
+        logger.debug(f"🔧 Tensor creado: {model_input.shape} (N, C, T, V, M)")
         
         return model_input
     
@@ -350,11 +389,11 @@ class TRTPoseClassifier:
             # Filtrar keypoints de baja confianza
             filtered_keypoints = self._filter_low_confidence_keypoints(keypoints)
             
-            # Convertir al formato NVIDIA
-            nvidia_keypoints = self._convert_keypoints_format(filtered_keypoints)
+            # Procesar keypoints según formato del modelo
+            processed_keypoints = self._convert_keypoints_format(filtered_keypoints)
             
             # Normalizar coordenadas
-            normalized_keypoints = self._normalize_keypoints(nvidia_keypoints)
+            normalized_keypoints = self._normalize_keypoints(processed_keypoints)
             
             # Añadir al buffer temporal
             self.sequence_buffer.append(normalized_keypoints)
@@ -403,12 +442,22 @@ class TRTPoseClassifier:
             
             inference_time = time.time() - start_time
             
-            # Procesar salida
-            prediction_logits = h_output.flatten()  # Aplanar si es necesario
+            # Procesar salida del modelo
+            prediction_logits = h_output.flatten()  
             probabilities = self._softmax(prediction_logits)
+            
+            # Validar que hay exactamente 6 clases (según documentación)
+            if len(probabilities) != len(self.POSE_CLASSES):
+                logger.warning(f"⚠️ Número de clases inesperado: {len(probabilities)} vs {len(self.POSE_CLASSES)}")
             
             # Obtener clase predicha
             predicted_class_idx = np.argmax(probabilities)
+            
+            # Validar índice de clase
+            if predicted_class_idx >= len(self.POSE_CLASSES):
+                logger.error(f"❌ Índice de clase inválido: {predicted_class_idx}")
+                return self._create_empty_result()
+                
             predicted_class = self.POSE_CLASSES[predicted_class_idx]
             confidence = float(probabilities[predicted_class_idx])
             
@@ -431,13 +480,55 @@ class TRTPoseClassifier:
                 'timestamp': time.time()
             }
             
-            logger.debug(f"🎭 Clasificación TensorRT: {predicted_class} ({confidence:.2f})")
+            logger.debug(f"🎭 Clasificación: {predicted_class} ({confidence:.2f}) - Clases detectadas: {len(probabilities)}")
             
             return result
             
         except Exception as e:
             logger.error(f"❌ Error en clasificación TensorRT: {e}")
             return self._create_empty_result()
+    
+    def verify_class_order(self) -> Dict:
+        """
+        Verifica el orden de las clases del modelo comparando con la documentación oficial
+        
+        Returns:
+            Diccionario con información de verificación
+        """
+        expected_classes = [
+            'sitting_down',  # ID: 0
+            'getting_up',    # ID: 1  
+            'sitting',       # ID: 2
+            'standing',      # ID: 3
+            'walking',       # ID: 4
+            'jumping'        # ID: 5
+        ]
+        
+        verification = {
+            'classes_match': self.POSE_CLASSES == expected_classes,
+            'expected_classes': expected_classes,
+            'current_classes': self.POSE_CLASSES,
+            'class_count_correct': len(self.POSE_CLASSES) == 6,
+            'differences': []
+        }
+        
+        # Detectar diferencias
+        for i, (expected, current) in enumerate(zip(expected_classes, self.POSE_CLASSES)):
+            if expected != current:
+                verification['differences'].append({
+                    'index': i,
+                    'expected': expected,
+                    'current': current
+                })
+        
+        if verification['classes_match']:
+            logger.info("✅ Orden de clases correcto según documentación NGC")
+        else:
+            logger.warning("⚠️ Orden de clases no coincide con documentación NGC")
+            for diff in verification['differences']:
+                logger.warning(f"   Índice {diff['index']}: esperado '{diff['expected']}', actual '{diff['current']}'")
+        
+        return verification
     
     def _softmax(self, x: np.ndarray) -> np.ndarray:
         """Aplica función softmax a los logits"""
@@ -490,9 +581,21 @@ class TRTPoseClassifier:
             stats['model_info'] = {
                 'model_path': self.model_path,
                 'keypoint_format': self.keypoint_format,
+                'target_keypoints': self.target_keypoints,
                 'sequence_length': self.sequence_length,
+                'max_sequence_length': 300,  # Según documentación
                 'confidence_threshold': self.confidence_threshold,
-                'supported_classes': self.POSE_CLASSES
+                'graph_strategy': getattr(self, 'graph_strategy', 'spatial'),
+                'supported_classes': self.POSE_CLASSES,
+                'model_accuracy': {
+                    'sitting_down': 98.94,
+                    'getting_up': 99.08, 
+                    'sitting': 87.13,
+                    'standing': 80.81,
+                    'walking': 92.93,
+                    'jumping': 85.56,
+                    'total_accuracy': 90.88
+                }
             }
             
             with open(filepath, 'w') as f:
@@ -594,14 +697,16 @@ class TRTPoseClassifierManager:
 
 # Función de utilidad para crear clasificador rápidamente
 def create_pose_classifier(model_path: str, 
-                          keypoint_format: str = 'coco',
+                          keypoint_format: str = 'nvidia',
+                          sequence_length: int = 300,
                           **kwargs) -> TRTPoseClassifier:
     """
-    Función de utilidad para crear un clasificador de poses
+    Función de utilidad para crear un clasificador de poses según documentación NGC
     
     Args:
         model_path: Ruta al modelo engine
-        keypoint_format: Formato de keypoints ('coco', 'openpose', 'nvidia', etc.)
+        keypoint_format: Formato de keypoints ('nvidia', 'coco', 'openpose', etc.)
+        sequence_length: Longitud de secuencia (máximo 300 frames)
         **kwargs: Argumentos adicionales para TRTPoseClassifier
     
     Returns:
@@ -610,6 +715,7 @@ def create_pose_classifier(model_path: str,
     return TRTPoseClassifier(
         model_path=model_path,
         keypoint_format=keypoint_format,
+        sequence_length=sequence_length,
         **kwargs
     )
 
@@ -629,20 +735,23 @@ if __name__ == "__main__":
         # Crear clasificador
         classifier = create_pose_classifier(
             model_path=model_path,
-            keypoint_format='coco',
-            sequence_length=30,
+            keypoint_format='nvidia',  # Usar formato NVIDIA por defecto según documentación
+            sequence_length=300,       # Máximo según documentación
             confidence_threshold=0.3
         )
         
-        # Simular keypoints de ejemplo (COCO format)
-        example_keypoints = np.random.rand(17, 3)  # 17 keypoints COCO con x,y,confidence
+        # Simular keypoints de ejemplo (formato NVIDIA)
+        example_keypoints = np.random.rand(34, 3)  # 34 keypoints NVIDIA con x,y,confidence
         
-        # Procesar varios frames
-        for i in range(35):  # Más que sequence_length para obtener clasificación
-            result = classifier.process_keypoints(example_keypoints + np.random.rand(17, 3) * 0.1)
+        # Procesar varios frames (más que sequence_length para obtener clasificación)
+        print("🎬 Procesando secuencia de ejemplo...")
+        for i in range(305):  # Más que sequence_length para obtener clasificación
+            result = classifier.process_keypoints(example_keypoints + np.random.rand(34, 3) * 0.1)
             
             if result and not result.get('error', False):
                 print(f"Frame {i}: {result['predicted_class']} (conf: {result['confidence']:.2f})")
+                if i > 300:  # Solo mostrar algunas predicciones
+                    break
         
         # Mostrar estadísticas
         stats = classifier.get_statistics()

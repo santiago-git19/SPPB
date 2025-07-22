@@ -71,7 +71,7 @@ class TRTPoseWithClassifier:
         # Crear clasificador de poses
         self.pose_classifier = create_pose_classifier(
             model_path=pose_classifier_model_path,
-            keypoint_format='coco',  # trt_pose usa formato similar a COCO
+            keypoint_format='nvidia',  # Usar formato NVIDIA según documentación oficial
             sequence_length=100,      
             confidence_threshold=0.07
         )
