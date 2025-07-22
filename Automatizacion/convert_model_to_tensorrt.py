@@ -52,8 +52,8 @@ class TensorRTModelConverter:
         # Configurar monitores de recursos
         self.resource_monitor = JetsonResourceMonitor(
             log_interval=15,  # Más frecuente durante conversión
-            memory_threshold=95, 
-            temperature_threshold=80.0 
+            memory_threshold=98,  # Umbral más alto para evitar pausas innecesarias
+            temperature_threshold=85.0  # Umbral más alto de temperatura
         )
         self.swap_manager = JetsonSwapManager(swap_size_gb=4)  # Más swap para conversión
         self.cpu_limiter = JetsonCPULimiter()
@@ -83,18 +83,19 @@ class TensorRTModelConverter:
         self._setup_alert_callbacks()
         
     def _setup_alert_callbacks(self):
-        """Configura callbacks para alertas durante conversión"""
+        """Configura callbacks para alertas durante conversión (sin pausas)"""
         def memory_alert(percent):
-            logger.warning("🚨 ALERTA MEMORIA: %.1f%% - Pausando conversión...", percent)
+            logger.warning("🚨 ALERTA MEMORIA: %.1f%% - Continuando conversión sin pausa...", percent)
+            # Solo limpiar memoria pero no pausar
             self._emergency_memory_cleanup()
-            time.sleep(5)  # Pausa más larga durante conversión
             
         def temperature_alert(temp):
-            logger.warning("🌡️ ALERTA TEMPERATURA: %.1f°C - Pausando para enfriar...", temp)
-            time.sleep(10)  # Pausa para enfriamiento
+            logger.warning("🌡️ ALERTA TEMPERATURA: %.1f°C - Continuando conversión sin pausa...", temp)
+            # Solo registrar la alerta, no pausar
             
         def cpu_alert(percent):
-            logger.warning("💻 ALERTA CPU: %.1f%% - Reduciendo carga...", percent)
+            logger.warning("💻 ALERTA CPU: %.1f%% - Continuando conversión sin pausa...", percent)
+            # Solo registrar la alerta, no reducir carga
             
         self.resource_monitor.add_callback('memory_alert', memory_alert)
         self.resource_monitor.add_callback('temperature_alert', temperature_alert)
@@ -200,7 +201,7 @@ class TensorRTModelConverter:
             logger.info("Memoria disponible: %.1f GB", memory.available / (1024**3))
             
             if memory.available < 1024**3:  # Menos de 1GB
-                logger.warning("⚠️ Poca memoria disponible, liberando recursos...")
+                logger.warning("⚠️ Poca memoria disponible, continuando con precaución...")
                 self._emergency_memory_cleanup()
                 
             # Crear modelo
@@ -337,8 +338,8 @@ class TensorRTModelConverter:
             logger.info("  Memoria: %.1f%%", memory_percent)
             logger.info("  Temperatura: %.1f°C", temp or 0)
             
-            if memory_percent > 75:
-                logger.warning("⚠️ Memoria alta antes de conversión, liberando...")
+            if memory_percent > 99:
+                logger.warning("⚠️ Memoria alta antes de conversión, limpiando y continuando...")
                 self._emergency_memory_cleanup()
                 
             # Configurar parámetros de conversión
@@ -761,8 +762,9 @@ class TensorRTModelConverter:
         logger.info(f"   Requerido estimado: {minimum_required_mb:.0f} MB")
         
         if available_mb < minimum_required_mb:
-            logger.error(f"❌ Memoria insuficiente: {available_mb:.0f} < {minimum_required_mb:.0f} MB")
-            return False
+            logger.warning(f"⚠️ Memoria posiblemente insuficiente: {available_mb:.0f} < {minimum_required_mb:.0f} MB")
+            logger.warning("⚠️ Continuando conversión, puede usar swap o fallar...")
+            # No retornar False, permitir que continúe
             
         # Verificar swap si está disponible
         swap = psutil.swap_memory()
