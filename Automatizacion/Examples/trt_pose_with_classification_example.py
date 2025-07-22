@@ -289,7 +289,7 @@ def main():
     """Función principal de ejemplo"""
     # Configuración de rutas - AJUSTAR SEGÚN TU SISTEMA
     config = {
-        'trt_pose_model': '/home/mobilenet/Documentos/Trabajo/trt_pose/models/densenet121_baseline_att_256x256_B_epoch_160.pth',
+        'trt_pose_model': '/home/mobilenet/Documentos/Trabajo/trt_pose/models/densenetresnet18_baseline_att_224x224_A_epoch_249.pth',
         'pose_topology': '/home/mobilenet/Documentos/Trabajo/trt_pose/tasks/human_pose/human_pose.json',
         'pose_classifier_model': '/home/mobilenet/Documentos/Trabajo/SPPB/models/pose_classification/st-gcn_3dbp_nvidia.engine',
         'video_source': '/home/mobilenet/Documentos/Trabajo/SPPB/Automatizacion/WIN_20250702_12_09_08_Pro.mp4',  # Ruta para archivo de video

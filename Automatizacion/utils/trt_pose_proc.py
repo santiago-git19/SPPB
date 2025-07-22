@@ -297,8 +297,8 @@ class TRTPoseProcessor:
         self.num_links = len(self.human_pose['skeleton'])
         
         # Configurar transformaciones
-        self.WIDTH = 256
-        self.HEIGHT = 256
+        self.WIDTH = 224
+        self.HEIGHT = 224
         self.mean = torch.Tensor([0.485, 0.456, 0.406]).to(self.device)
         self.std = torch.Tensor([0.229, 0.224, 0.225]).to(self.device)
         
