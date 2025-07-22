@@ -229,8 +229,10 @@ class TensorRTModelConverter:
             return self._convert_gpu()
             
         except Exception as e:
-            if "out of memory" in str(e).lower() or "cuda" in str(e).lower() or "memory" in str(e).lower():
-                logger.warning("💾 OOM en GPU detectado, usando fallback CPU...")
+            error_msg = str(e).lower()
+            if any(keyword in error_msg for keyword in ["out of memory", "cuda", "memory", "tensorrt", "trt", "__len__", "deconvolution", "kernel weights"]):
+                logger.warning("💾 Error en GPU detectado (memoria/TensorRT), usando fallback CPU...")
+                logger.warning("   Error: %s", str(e))
                 logger.warning("   Esto usará swap efectivamente pero será más lento...")
                 return self._convert_cpu_with_swap()
             else:
@@ -354,8 +356,9 @@ class TensorRTModelConverter:
             return True
             
         except Exception as e:
-            if "out of memory" in str(e).lower():
-                logger.error("💥 GPU Out of Memory: %s", str(e))
+            error_msg = str(e).lower()
+            if any(keyword in error_msg for keyword in ["out of memory", "tensorrt", "trt", "__len__", "deconvolution", "kernel weights"]):
+                logger.error("💥 Error TensorRT/GPU: %s", str(e))
                 raise e
             else:
                 logger.error("❌ Error durante conversión GPU: %s", str(e))
