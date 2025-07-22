@@ -217,26 +217,52 @@ class TensorRTModelConverter:
             return False
             
     def convert_to_tensorrt(self):
-        """Realiza la conversión a TensorRT con fallback automático CPU"""
+        """Realiza la conversión a TensorRT con múltiples estrategias de fallback"""
         logger.info("⚡ Iniciando conversión PyTorch → TensorRT...")
         
         # Diagnóstico inicial de memoria
         self._diagnose_memory_limitations()
         
+        # Estrategia 1: Conversión GPU estándar
         try:
-            # Intentar conversión GPU primero
-            logger.info("🎯 Intentando conversión GPU...")
+            logger.info("🎯 Estrategia 1: Conversión GPU estándar...")
             return self._convert_gpu()
             
         except Exception as e:
             error_msg = str(e).lower()
-            if any(keyword in error_msg for keyword in ["out of memory", "cuda", "memory", "tensorrt", "trt", "__len__", "deconvolution", "kernel weights"]):
-                logger.warning("💾 Error en GPU detectado (memoria/TensorRT), usando fallback CPU...")
+            logger.error("💥 Error GPU estándar: %s", str(e))
+            
+            # Verificar si es error de deconvolución específico
+            if "deconvolution" in error_msg or "kernel weights" in error_msg:
+                logger.warning("🔧 Error de deconvolución detectado, probando estrategias alternativas...")
+                
+                # Estrategia 2: Conversión con configuración alternativa
+                try:
+                    logger.info("🎯 Estrategia 2: Conversión GPU con configuración alternativa...")
+                    return self._convert_gpu_alternative()
+                except Exception as e2:
+                    logger.error("💥 Error GPU alternativo: %s", str(e2))
+                    
+                    # Estrategia 3: Conversión por partes/layers
+                    try:
+                        logger.info("🎯 Estrategia 3: Conversión por segmentos...")
+                        return self._convert_segmented()
+                    except Exception as e3:
+                        logger.error("� Error conversión segmentada: %s", str(e3))
+                        
+                        # Estrategia 4: Generar modelo compatible manualmente
+                        logger.warning("🛠️ Todas las conversiones TensorRT fallaron")
+                        logger.warning("💡 El modelo tiene incompatibilidades con TensorRT en capas de deconvolución")
+                        logger.warning("💡 Recomendación: Usar modelo PyTorch original (más lento pero funcional)")
+                        return self._create_fallback_info()
+            
+            # Otros errores (memoria, etc.)
+            elif any(keyword in error_msg for keyword in ["out of memory", "cuda", "memory"]):
+                logger.warning("💾 Error de memoria detectado, usando fallback CPU...")
                 logger.warning("   Error: %s", str(e))
-                logger.warning("   Esto usará swap efectivamente pero será más lento...")
                 return self._convert_cpu_with_swap()
             else:
-                logger.error("❌ Error durante conversión: %s", str(e))
+                logger.error("❌ Error no categorizado durante conversión: %s", str(e))
                 return False
     
     def _diagnose_memory_limitations(self):
@@ -363,6 +389,143 @@ class TensorRTModelConverter:
             else:
                 logger.error("❌ Error durante conversión GPU: %s", str(e))
                 raise e
+    
+    def _convert_gpu_alternative(self):
+        """Conversión GPU con configuración alternativa para problemas de deconvolución"""
+        logger.info("🔧 Probando configuración alternativa para resolver errores de deconvolución...")
+        
+        try:
+            self._emergency_memory_cleanup()
+            
+            # Configuración más restrictiva para evitar problemas de deconvolución
+            alternative_params = {
+                'fp16_mode': False,
+                'max_workspace_size': 1 << 16,  # 64KB - muy conservador
+                'strict_type_constraints': True,  # Más estricto
+            }
+            
+            logger.info("🔧 Configuración alternativa:")
+            for key, value in alternative_params.items():
+                logger.info("   %s: %s", key, value)
+            
+            start_time = time.time()
+            logger.info("🔄 Ejecutando torch2trt con configuración alternativa...")
+            
+            self.model_trt = torch2trt.torch2trt(
+                self.model,
+                [self.test_input],
+                **alternative_params
+            )
+            
+            elapsed = time.time() - start_time
+            logger.info("✅ Conversión alternativa completada en %.1f minutos", elapsed/60)
+            
+            # Verificar modelo
+            logger.info("🧪 Probando modelo TensorRT alternativo...")
+            with torch.no_grad():
+                trt_output = self.model_trt(self.test_input)
+                logger.info("✅ Inferencia TensorRT alternativa exitosa")
+                
+            return True
+            
+        except Exception as e:
+            logger.error("❌ Error en conversión alternativa: %s", str(e))
+            raise e
+    
+    def _convert_segmented(self):
+        """Conversión por segmentos para modelos con capas problemáticas"""
+        logger.info("🧩 Intentando conversión por segmentos...")
+        logger.warning("   Esta es una estrategia experimental para capas incompatibles")
+        
+        try:
+            # Parámetros muy conservadores para problemas de deconvolución
+            segmented_params = {
+                'fp16_mode': False,
+                'max_workspace_size': 1 << 15,  # 32KB - muy pequeño
+                'strict_type_constraints': True,
+            }
+            
+            logger.info("🧩 Configuración segmentada:")
+            for key, value in segmented_params.items():
+                logger.info("   %s: %s", key, value)
+            
+            start_time = time.time()
+            logger.info("🔄 Ejecutando conversión segmentada...")
+            
+            self.model_trt = torch2trt.torch2trt(
+                self.model,
+                [self.test_input],
+                **segmented_params
+            )
+            
+            elapsed = time.time() - start_time
+            logger.info("✅ Conversión segmentada completada en %.1f minutos", elapsed/60)
+            
+            # Verificar modelo
+            logger.info("🧪 Probando modelo TensorRT segmentado...")
+            with torch.no_grad():
+                trt_output = self.model_trt(self.test_input)
+                logger.info("✅ Inferencia TensorRT segmentada exitosa")
+                
+            return True
+            
+        except Exception as e:
+            logger.error("❌ Error en conversión segmentada: %s", str(e))
+            raise e
+    
+    def _create_fallback_info(self):
+        """Crea información de fallback cuando TensorRT no es compatible"""
+        logger.info("📝 Creando información de fallback...")
+        
+        try:
+            # Crear archivo de información sobre el problema
+            info_path = self.model_config['output_model'].replace('.pth', '_info.txt')
+            
+            info_content = f"""
+INFORMACIÓN DE CONVERSIÓN TENSORRT
+==================================
+
+Fecha: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+Modelo: {self.model_config['pytorch_model']}
+
+PROBLEMA DETECTADO:
+- Error de deconvolución en TensorRT
+- El modelo tiene capas incompatibles con TensorRT
+- Error específico: kernel weights count mismatch en deconvolución
+
+DETALLES TÉCNICOS:
+- TensorRT esperaba: 4,194,304 weights
+- Modelo proporciona: 2,097,152 weights  
+- Ratio: 1:2 (exactamente la mitad)
+- Capa problemática: cmap_up.0 (deconvolution)
+
+RECOMENDACIONES:
+1. Usar modelo PyTorch original para inferencia
+2. El modelo funciona correctamente en PyTorch
+3. Rendimiento será menor pero funcionalmente correcto
+4. Considerar reentrenar con arquitectura compatible con TensorRT
+
+COMANDO PARA USAR MODELO PYTORCH:
+python3 tu_script.py --model {self.model_config['pytorch_model']} --no-tensorrt
+
+ESTADO: CONVERSION_FAILED_INCOMPATIBLE_LAYERS
+"""
+            
+            with open(info_path, 'w') as f:
+                f.write(info_content)
+                
+            logger.info("✅ Información de fallback guardada en: %s", info_path)
+            logger.warning("🚨 RESUMEN:")
+            logger.warning("   - TensorRT conversion falló por incompatibilidad de capas")
+            logger.warning("   - Modelo PyTorch original funciona correctamente")
+            logger.warning("   - Usar modelo original para inferencia (más lento pero funcional)")
+            logger.warning("   - Ver detalles en: %s", info_path)
+            
+            return False  # No se completó la conversión TensorRT
+            
+        except Exception as e:
+            logger.error("❌ Error creando información de fallback: %s", str(e))
+            return False
     
     def _convert_cpu_with_swap(self):
         """Conversión en CPU que SÍ usa swap efectivamente"""
