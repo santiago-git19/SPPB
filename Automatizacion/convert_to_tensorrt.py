@@ -56,8 +56,8 @@ if __name__ == "__main__":
 
 
     # Configuración del modelo (COCO)
-    num_parts = 18  # Número de keypoints
-    num_links = 17  # Número de conexiones
+    num_parts = 21  # Número de keypoints actualizado para coincidir con el modelo
+    num_links = 20  # Número de conexiones actualizado para coincidir con el modelo
 
     # Convertir el modelo
     convert_model_to_tensorrt(pytorch_model_path, tensorrt_model_path, num_parts, num_links)
