@@ -148,14 +148,14 @@ class TRTPoseWithClassifier:
         """
         result_image = image.copy()
         
-        # Dibujar keypoints
-        for person_idx, keypoints in enumerate(frame_result['keypoints_extracted']):
-            # Encontrar clasificación para esta persona
+        # ✅ SOLUCIÓN: keypoints_extracted es un solo array (17, 3), no una lista
+        keypoints = frame_result['keypoints_extracted']
+        
+        if keypoints is not None and len(keypoints) > 0:
+            # Encontrar clasificación (solo hay una persona)
             classification = None
-            for cls in frame_result['pose_classifications']:
-                if cls['person_id'] == person_idx:
-                    classification = cls
-                    break
+            if frame_result['pose_classifications']:
+                classification = frame_result['pose_classifications'][0]
             
             # Dibujar keypoints
             for kp in keypoints:
