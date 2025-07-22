@@ -160,7 +160,7 @@ class TRTPoseWithClassifier:
             # Dibujar keypoints
             for kp in keypoints:
                 x, y, conf = kp
-                if conf > 0.3:  # Solo keypoints con buena confianza
+                if conf > self.pose_classifier.confidence_threshold:  # Solo keypoints con buena confianza
                     cv2.circle(result_image, (int(x), int(y)), 3, (0, 255, 0), -1)
             
             # Dibujar clasificación si está disponible
@@ -169,7 +169,7 @@ class TRTPoseWithClassifier:
                 confidence = classification['confidence']
                 
                 # Encontrar posición para texto (centroide de keypoints válidos)
-                valid_kps = keypoints[keypoints[:, 2] > 0.3]
+                valid_kps = keypoints[keypoints[:, 2] > self.pose_classifier.confidence_threshold]
                 if len(valid_kps) > 0:
                     center_x = int(np.mean(valid_kps[:, 0]))
                     center_y = int(np.mean(valid_kps[:, 1])) - 30
