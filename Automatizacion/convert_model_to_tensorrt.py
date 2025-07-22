@@ -55,7 +55,7 @@ class TensorRTModelConverter:
             memory_threshold=95, 
             temperature_threshold=80.0 
         )
-        #self.swap_manager = JetsonSwapManager(swap_size_gb=4)  # Más swap para conversión
+        self.swap_manager = JetsonSwapManager(swap_size_gb=4)  # Más swap para conversión
         self.cpu_limiter = JetsonCPULimiter()
         
         # Configuración de rutas
