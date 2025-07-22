@@ -292,7 +292,7 @@ def main():
         'trt_pose_model': '/home/mobilenet/Documentos/Trabajo/trt_pose/models/resnet18_baseline_att_224x224_A_epoch_249.pth',
         'pose_topology': '/home/mobilenet/Documentos/Trabajo/trt_pose/tasks/human_pose/human_pose.json',
         'pose_classifier_model': '/home/mobilenet/Documentos/Trabajo/SPPB/models/pose_classification/st-gcn_3dbp_nvidia.engine',
-        'video_source': '/home/mobilenet/Documentos/Trabajo/SPPB/Automatizacion/WIN_20250722_13_47_30_Pro.mp4',  # Ruta para archivo de video
+        'video_source': '/home/mobilenet/Documentos/Trabajo/SPPB/Automatizacion/Levantarse_sentarse.mp4',  # Ruta para archivo de video
         'output_video': '/home/mobilenet/Documentos/Trabajo/SPPB/Automatizacion/output_with_poses.mp4'  # 'output_with_poses.mp4' para guardar
     }
     
