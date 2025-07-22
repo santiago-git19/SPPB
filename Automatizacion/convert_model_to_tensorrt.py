@@ -52,8 +52,8 @@ class TensorRTModelConverter:
         # Configurar monitores de recursos
         self.resource_monitor = JetsonResourceMonitor(
             log_interval=15,  # Más frecuente durante conversión
-            memory_threshold=101.0, 
-            temperature_threshold=100.0
+            memory_threshold=95, 
+            temperature_threshold=80.0 
         )
         self.swap_manager = JetsonSwapManager(swap_size_gb=4)  # Más swap para conversión
         self.cpu_limiter = JetsonCPULimiter()
@@ -72,7 +72,7 @@ class TensorRTModelConverter:
             'height': 224,
             'batch_size': 1,
             'fp16_mode': True,
-            'max_workspace_size': 1 << 22,  # 4MB (ultra conservador para 930MB RAM)
+            'max_workspace_size': 1 << 20,  # 1MB (ultra conservador para 930MB RAM)
             'strict_type_constraints': True,
             'int8_mode': False,  # FP16 es suficiente para Jetson Nano
             'minimum_segment_size': 3,  # Fusionar solo segmentos grandes
@@ -830,12 +830,3 @@ class TensorRTModelConverter:
             torch.cuda.empty_cache()
             gc.collect()
             return False
-
-
-if __name__ == "__main__":
-    converter = TensorRTModelConverter()
-    success = converter.run_conversion()
-    if success:
-        logger.info("🎉 Conversión completada exitosamente.")
-    else:
-        logger.error("❌ Conversión fallida.")
