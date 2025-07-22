@@ -127,6 +127,7 @@ class TensorRTModelConverter:
             os.environ[key] = value
             logger.info("✅ %s=%s", key, value)
             
+        '''
         # Configurar swap ampliado para conversión
         if not self.swap_manager.setup_swap():
             logger.warning("⚠️ No se pudo configurar swap automáticamente")
@@ -135,7 +136,7 @@ class TensorRTModelConverter:
             logger.info("   sudo chmod 600 /swapfile") 
             logger.info("   sudo mkswap /swapfile")
             logger.info("   sudo swapon /swapfile")
-            
+        '''
         # Limitar a 1 core durante conversión para evitar sobrecalentamiento
         if not self.cpu_limiter.limit_cpu_cores([0]):
             logger.warning("⚠️ No se pudo limitar CPU")
