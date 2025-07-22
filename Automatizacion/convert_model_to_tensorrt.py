@@ -363,7 +363,10 @@ class TensorRTModelConverter:
                 self.model_trt = torch2trt.torch2trt(
                     self.model,
                     [self.test_input],
-                    **conversion_params
+                    model_constructor=resnet18_baseline_att_224x224_A,  # si tu versión de torch2trt lo soporta
+                    fp16_mode=self.conversion_config['fp16_mode'],
+                    max_workspace_size=self.conversion_config['max_workspace_size'],
+                    strict_type_constraints=self.conversion_config['strict_type_constraints'],
                 )
                 conversion_active = False
                 
@@ -889,7 +892,7 @@ ESTADO: CONVERSION_FAILED_INCOMPATIBLE_LAYERS
         try:
             # Crear modelo paso a paso para detectar problemas de memoria
             logger.info("📐 Creando arquitectura del modelo...")
-            self.model = trt_pose.models.resnet18_baseline_att(
+            self.model = trt_pose.models.resnet18_baseline_att_224x224_A(
                 self.num_parts, 2 * self.num_links
             )
             
