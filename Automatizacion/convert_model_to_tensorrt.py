@@ -148,22 +148,6 @@ class TensorRTModelConverter:
             logger.error("❌ Error cargando configuración: %s", str(e))
             return False
             
-    def resnet18_baseline_att_224x224_A(cmap_channels, paf_channels, pretrained=False):
-        # Esta es la definición exacta tomada del repo oficial
-        resnet = torchvision.models.resnet18(pretrained=pretrained)
-        # feature_channels=512, upsample_channels=256, num_upsample=4, num_flat=0
-        return torch.nn.Sequential(
-            ResNetBackbone(resnet),
-            CmapPafHeadAttention(
-                feature_channels=512,
-                cmap_channels=cmap_channels,
-                paf_channels=paf_channels,
-                upsample_channels=256,
-                num_upsample=4,
-                num_flat=0
-            )
-        )
-
     def create_pytorch_model(self):
         """Crea y carga el modelo PyTorch"""
         logger.info("🏗️ Creando modelo PyTorch...")
@@ -178,10 +162,8 @@ class TensorRTModelConverter:
                 self._emergency_memory_cleanup()
                 
             # Crear modelo
-            self.model = self.resnet18_baseline_att_224x224_A(
-                self.num_parts,
-                2 * self.num_links,
-                pretrained=False
+            self.model = trt_pose.models.resnet18_baseline_att(
+                self.num_parts, 2 * self.num_links,
             ).cuda().eval()
             
             logger.info("✅ Modelo creado en GPU")
