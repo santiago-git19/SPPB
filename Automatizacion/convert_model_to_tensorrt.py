@@ -831,3 +831,26 @@ class TensorRTModelConverter:
             torch.cuda.empty_cache()
             gc.collect()
             return False
+
+if __name__ == "__main__":
+    # Configurar logging para mostrar mensajes en consola
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
+    logger = logging.getLogger(__name__)
+
+    try:
+        # Inicializar el convertidor
+        converter = TensorRTModelConverter()
+
+        # Ejecutar la conversión
+        success = converter.run_conversion()
+
+        if success:
+            logger.info("🎉 Conversión completada exitosamente.")
+        else:
+            logger.error("❌ Conversión fallida.")
+
+    except Exception as e:
+        logger.error(f"❌ Error crítico durante la ejecución: {e}")
