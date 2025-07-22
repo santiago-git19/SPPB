@@ -37,27 +37,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Importar utilidades de Jetson
-from utils.jetson_utils import (
-    JetsonResourceMonitor, 
-    JetsonSwapManager, 
-    JetsonCPULimiter, 
-    setup_jetson_optimizations
-)
+# Comentar utilidades de Jetson para evitar pausas automáticas
+# from utils.jetson_utils import (
+#     JetsonResourceMonitor, 
+#     JetsonSwapManager, 
+#     JetsonCPULimiter, 
+#     setup_jetson_optimizations
+# )
 
 class TensorRTModelConverter:
     """Convertidor optimizado de PyTorch a TensorRT para Jetson Nano"""
     
     def __init__(self):
-        # Configurar monitores de recursos
-        self.resource_monitor = JetsonResourceMonitor(
-            log_interval=15,  # Más frecuente durante conversión
-            memory_threshold=98,  # Umbral más alto para evitar pausas innecesarias
-            temperature_threshold=85.0  # Umbral más alto de temperatura
-        )
-        self.swap_manager = JetsonSwapManager(swap_size_gb=4)  # Más swap para conversión
-        self.cpu_limiter = JetsonCPULimiter()
-        
         # Configuración de rutas
         self.model_config = {
             'pytorch_model': '/home/mobilenet/Documentos/Trabajo/trt_pose/models/resnet18_baseline_att_224x224_A_epoch_249.pth',
@@ -80,26 +71,11 @@ class TensorRTModelConverter:
             'optimize_for_memory': True  # Priorizar memoria sobre velocidad
         }
         
-        self._setup_alert_callbacks()
-        
     def _setup_alert_callbacks(self):
-        """Configura callbacks para alertas durante conversión (sin pausas)"""
-        def memory_alert(percent):
-            logger.warning("🚨 ALERTA MEMORIA: %.1f%% - Continuando conversión sin pausa...", percent)
-            # Solo limpiar memoria pero no pausar
-            self._emergency_memory_cleanup()
-            
-        def temperature_alert(temp):
-            logger.warning("🌡️ ALERTA TEMPERATURA: %.1f°C - Continuando conversión sin pausa...", temp)
-            # Solo registrar la alerta, no pausar
-            
-        def cpu_alert(percent):
-            logger.warning("💻 ALERTA CPU: %.1f%% - Continuando conversión sin pausa...", percent)
-            # Solo registrar la alerta, no reducir carga
-            
-        self.resource_monitor.add_callback('memory_alert', memory_alert)
-        self.resource_monitor.add_callback('temperature_alert', temperature_alert)
-        self.resource_monitor.add_callback('cpu_alert', cpu_alert)
+        """Configuración de alertas deshabilitada para evitar pausas"""
+        # Callbacks eliminados para evitar pausas automáticas
+        logger.info("✅ Sistema de alertas deshabilitado - sin pausas automáticas")
+        pass
         
     def _emergency_memory_cleanup(self):
         """Limpieza agresiva de memoria durante conversión"""
@@ -110,13 +86,10 @@ class TensorRTModelConverter:
             torch.cuda.synchronize()
             
     def setup_environment(self):
-        """Configura el entorno optimizado para conversión"""
+        """Configura el entorno optimizado para conversión (simplificado)"""
         logger.info("🚀 Configurando entorno para conversión TensorRT...")
         
-        # Configuraciones específicas para conversión
-        setup_jetson_optimizations()
-        
-        # Variables adicionales para conversión
+        # Variables básicas de optimización
         conversion_env = {
             'CUDA_VISIBLE_DEVICES': '0',
             'TRT_LOGGER_VERBOSITY': '1',  # Más verboso para conversión
@@ -128,24 +101,8 @@ class TensorRTModelConverter:
             os.environ[key] = value
             logger.info("✅ %s=%s", key, value)
             
-        '''
-        # Configurar swap ampliado para conversión
-        if not self.swap_manager.setup_swap():
-            logger.warning("⚠️ No se pudo configurar swap automáticamente")
-            logger.info("💡 Para configurar manualmente:")
-            logger.info("   sudo fallocate -l 4G /swapfile")
-            logger.info("   sudo chmod 600 /swapfile") 
-            logger.info("   sudo mkswap /swapfile")
-            logger.info("   sudo swapon /swapfile")
-        '''
-        # Limitar a 1 core durante conversión para evitar sobrecalentamiento
-        if not self.cpu_limiter.limit_cpu_cores([0]):
-            logger.warning("⚠️ No se pudo limitar CPU")
-            
-        # Iniciar monitoreo intensivo
-        self.resource_monitor.start_monitoring()
-        
-        logger.info("✅ Entorno configurado para conversión")
+        logger.info("✅ Entorno configurado para conversión (sin monitoreo)")
+        return True
         
     def verify_model_files(self):
         """Verifica que los archivos necesarios existan"""
@@ -329,14 +286,12 @@ class TensorRTModelConverter:
     def _convert_gpu(self):
         """Conversión estándar usando GPU"""
         try:
-            # Verificar recursos antes de conversión
-            stats = self.resource_monitor.get_current_stats()
-            memory_percent = stats.get('memory', {}).get('percent', 0)
-            temp = stats.get('temperature', 0)
+            # Verificar recursos básicos antes de conversión
+            memory = psutil.virtual_memory()
+            memory_percent = memory.percent
             
             logger.info("Estado inicial GPU:")
             logger.info("  Memoria: %.1f%%", memory_percent)
-            logger.info("  Temperatura: %.1f°C", temp or 0)
             
             if memory_percent > 99:
                 logger.warning("⚠️ Memoria alta antes de conversión, limpiando y continuando...")
@@ -364,14 +319,13 @@ class TensorRTModelConverter:
             
             def monitor_conversion():
                 while conversion_active:
-                    stats = self.resource_monitor.get_current_stats()
+                    memory = psutil.virtual_memory()
                     swap_info = psutil.swap_memory()
                     elapsed = time.time() - start_time
                     
-                    logger.info("⏱️ Conversión GPU (%.1f min) - Memoria: %.1f%% - Temp: %.1f°C - Swap: %.1f%%",
+                    logger.info("⏱️ Conversión GPU (%.1f min) - Memoria: %.1f%% - Swap: %.1f%%",
                               elapsed/60, 
-                              stats.get('memory', {}).get('percent', 0),
-                              stats.get('temperature', 0) or 0,
+                              memory.percent,
                               swap_info.percent if swap_info.total > 0 else 0)
                     time.sleep(30)  # Log cada 30 segundos
                     
@@ -446,17 +400,16 @@ class TensorRTModelConverter:
             def monitor_cpu_conversion():
                 initial_swap = psutil.swap_memory().used
                 while conversion_active:
-                    stats = self.resource_monitor.get_current_stats()
+                    memory = psutil.virtual_memory()
                     swap_info = psutil.swap_memory()
                     elapsed = time.time() - start_time
                     swap_increase = (swap_info.used - initial_swap) / (1024**2)  # MB
                     
-                    logger.info("⏱️ Conversión CPU (%.1f min) - RAM: %.1f%% - Swap: %.1f%% (+%.0f MB) - Temp: %.1f°C",
+                    logger.info("⏱️ Conversión CPU (%.1f min) - RAM: %.1f%% - Swap: %.1f%% (+%.0f MB)",
                               elapsed/60,
-                              stats.get('memory', {}).get('percent', 0),
+                              memory.percent,
                               swap_info.percent if swap_info.total > 0 else 0,
-                              swap_increase,
-                              stats.get('temperature', 0) or 0)
+                              swap_increase)
                     
                     if swap_increase > 100:  # Si está usando swap significativamente
                         logger.info("✅ Swap siendo usado efectivamente")
@@ -581,7 +534,7 @@ class TensorRTModelConverter:
             return False
             
     def cleanup_resources(self):
-        """Limpieza final de recursos"""
+        """Limpieza final de recursos (simplificada)"""
         logger.info("🧹 Limpiando recursos...")
         
         try:
@@ -595,12 +548,6 @@ class TensorRTModelConverter:
                 
             # Limpieza agresiva de memoria
             self._emergency_memory_cleanup()
-            
-            # Detener monitoreo
-            self.resource_monitor.stop_monitoring()
-            
-            # Restaurar CPU
-            self.cpu_limiter.restore_cpu_affinity()
             
             logger.info("✅ Limpieza completada")
             
@@ -649,19 +596,11 @@ class TensorRTModelConverter:
                 
             # Estadísticas finales
             total_time = time.time() - start_time
-            final_stats = self.resource_monitor.get_stats_summary()
             
             logger.info("🎉 ¡Conversión completada exitosamente!")
             logger.info("=" * 60)
             logger.info("⏱️ Tiempo total: %.1f minutos", total_time / 60)
             logger.info("📁 Modelo TensorRT: %s", self.model_config['output_model'])
-            
-            if final_stats:
-                logger.info("📊 Estadísticas de recursos:")
-                logger.info("   CPU promedio: %.1f%%", final_stats['cpu']['average'])
-                logger.info("   Memoria máxima: %.1f%%", final_stats['memory']['max'])
-                if final_stats['temperature']['max']:
-                    logger.info("   Temperatura máxima: %.1f°C", final_stats['temperature']['max'])
                     
             return True
             
@@ -757,12 +696,12 @@ class TensorRTModelConverter:
         conversion_overhead = 4  # Factor de overhead durante conversión
         minimum_required_mb = model_size_mb * conversion_overhead
         
-        logger.info(f"📊 Análisis de memoria:")
-        logger.info(f"   Disponible: {available_mb:.0f} MB")
-        logger.info(f"   Requerido estimado: {minimum_required_mb:.0f} MB")
+        logger.info("📊 Análisis de memoria:")
+        logger.info("   Disponible: %.0f MB", available_mb)
+        logger.info("   Requerido estimado: %.0f MB", minimum_required_mb)
         
         if available_mb < minimum_required_mb:
-            logger.warning(f"⚠️ Memoria posiblemente insuficiente: {available_mb:.0f} < {minimum_required_mb:.0f} MB")
+            logger.warning("⚠️ Memoria posiblemente insuficiente: %.0f < %.0f MB", available_mb, minimum_required_mb)
             logger.warning("⚠️ Continuando conversión, puede usar swap o fallar...")
             # No retornar False, permitir que continúe
             
@@ -770,7 +709,7 @@ class TensorRTModelConverter:
         swap = psutil.swap_memory()
         if swap.total > 0:
             total_virtual_mb = available_mb + (swap.free / (1024**2))
-            logger.info(f"   Total virtual (RAM+Swap): {total_virtual_mb:.0f} MB")
+            logger.info("   Total virtual (RAM+Swap): %.0f MB", total_virtual_mb)
             
         return True
         
