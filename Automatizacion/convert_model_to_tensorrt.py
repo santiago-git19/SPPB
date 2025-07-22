@@ -62,9 +62,9 @@ class TensorRTModelConverter:
             'width': 224,
             'height': 224,
             'batch_size': 1,
-            'fp16_mode': True,
-            'max_workspace_size': 1 << 20,  # 1MB (ultra conservador para 930MB RAM)
-            'strict_type_constraints': True,
+            'fp16_mode': False,  # Desactivar FP16 para evitar errores de dimensiones
+            'max_workspace_size': 1 << 18,  # 256KB (más conservador)
+            'strict_type_constraints': False,  # Más flexibilidad en tipos
             'int8_mode': False,  # FP16 es suficiente para Jetson Nano
             'minimum_segment_size': 3,  # Fusionar solo segmentos grandes
             'max_batch_size': 1,  # Máximo batch size
@@ -228,17 +228,14 @@ class TensorRTModelConverter:
             logger.info("🎯 Intentando conversión GPU...")
             return self._convert_gpu()
             
-        except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
-            if "out of memory" in str(e).lower():
+        except Exception as e:
+            if "out of memory" in str(e).lower() or "cuda" in str(e).lower() or "memory" in str(e).lower():
                 logger.warning("💾 OOM en GPU detectado, usando fallback CPU...")
                 logger.warning("   Esto usará swap efectivamente pero será más lento...")
                 return self._convert_cpu_with_swap()
             else:
-                logger.error("❌ Error no relacionado con memoria: %s", str(e))
-                raise e
-        except Exception as e:
-            logger.error("❌ Error inesperado durante conversión: %s", str(e))
-            return False
+                logger.error("❌ Error durante conversión: %s", str(e))
+                return False
     
     def _diagnose_memory_limitations(self):
         """Diagnóstica limitaciones específicas de memoria"""
@@ -356,12 +353,13 @@ class TensorRTModelConverter:
                 
             return True
             
-        except torch.cuda.OutOfMemoryError as e:
-            logger.error("💥 GPU Out of Memory: %s", str(e))
-            raise e
         except Exception as e:
-            logger.error("❌ Error durante conversión GPU: %s", str(e))
-            raise e
+            if "out of memory" in str(e).lower():
+                logger.error("💥 GPU Out of Memory: %s", str(e))
+                raise e
+            else:
+                logger.error("❌ Error durante conversión GPU: %s", str(e))
+                raise e
     
     def _convert_cpu_with_swap(self):
         """Conversión en CPU que SÍ usa swap efectivamente"""
