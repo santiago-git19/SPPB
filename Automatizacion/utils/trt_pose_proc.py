@@ -406,7 +406,8 @@ class TRTPoseProcessor:
         scale_x = width / cmap_width
         scale_y = height / cmap_height
         
-        keypoints = []
+        # Inicializar keypoints con ceros
+        keypoints = np.zeros((self.num_parts, 3), dtype=np.float32)  # (num_keypoints, 3)
         
         # Umbral para detección de keypoints
         threshold = 0.1
@@ -426,7 +427,8 @@ class TRTPoseProcessor:
                 # Escalar las coordenadas correctamente
                 x_scaled = int(x * scale_x)
                 y_scaled = int(y * scale_y)
-                keypoints[i]= [x_scaled, y_scaled, confidence]
+                if i < len(keypoints):
+                    keypoints[i]= [x_scaled, y_scaled, confidence]
 
                 #keypoints.append((x_scaled, y_scaled, confidence, i))
         
