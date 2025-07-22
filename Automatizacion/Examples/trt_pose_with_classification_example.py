@@ -73,7 +73,7 @@ class TRTPoseWithClassifier:
             model_path=pose_classifier_model_path,
             keypoint_format='coco',  # trt_pose usa formato similar a COCO
             sequence_length=100,      
-            confidence_threshold=0.1
+            confidence_threshold=0.01
         )
         
         # Estadísticas
