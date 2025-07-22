@@ -29,6 +29,8 @@ from datetime import datetime
 import trt_pose.models
 import trt_pose.coco
 import torch2trt
+from trt_pose.models import resnet18_baseline_att_224x224_A
+
 
 # Configurar logging
 logging.basicConfig(
@@ -162,7 +164,7 @@ class TensorRTModelConverter:
                 self._emergency_memory_cleanup()
                 
             # Crear modelo
-            self.model = trt_pose.models.resnet18_baseline_att(
+            self.model = resnet18_baseline_att_224x224_A(
                 self.num_parts, 2 * self.num_links
             ).cuda().eval()
             
@@ -892,7 +894,7 @@ ESTADO: CONVERSION_FAILED_INCOMPATIBLE_LAYERS
         try:
             # Crear modelo paso a paso para detectar problemas de memoria
             logger.info("📐 Creando arquitectura del modelo...")
-            self.model = trt_pose.models.resnet18_baseline_att_224x224_A(
+            self.model = resnet18_baseline_att_224x224_A(
                 self.num_parts, 2 * self.num_links
             )
             
