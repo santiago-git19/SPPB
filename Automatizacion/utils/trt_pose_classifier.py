@@ -312,7 +312,10 @@ class TRTPoseClassifier:
         model_input = np.expand_dims(model_input, axis=0)   # (N, C, T, V)
         model_input = np.expand_dims(model_input, axis=-1)  # (N, C, T, V, M)
         
-        return model_input.astype(np.float32)
+        # ✅ SOLUCIÓN: Asegurar que sea contiguo y del tipo correcto
+        model_input = np.ascontiguousarray(model_input.astype(np.float32))
+        
+        return model_input
     
     def process_keypoints(self, keypoints: Union[np.ndarray, List]) -> Optional[Dict]:
         """
@@ -381,11 +384,14 @@ class TRTPoseClassifier:
             if input_tensor is None:
                 return self._create_empty_result()
             
+            # ✅ SOLUCIÓN: Asegurar que el array sea contiguo
+            input_tensor = np.ascontiguousarray(input_tensor.astype(np.float32))
+            
             # Ejecutar inferencia TensorRT
             start_time = time.time()
             
             # Copiar datos a GPU
-            cuda.memcpy_htod(self.d_input, input_tensor.astype(np.float32))
+            cuda.memcpy_htod(self.d_input, input_tensor)
             
             # Ejecutar inferencia
             bindings = [int(self.d_input), int(self.d_output)]
