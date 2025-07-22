@@ -29,8 +29,6 @@ from datetime import datetime
 import trt_pose.models
 import trt_pose.coco
 import torch2trt
-from trt_pose.models import resnet18_baseline_att_224x224_A
-
 
 # Configurar logging
 logging.basicConfig(
@@ -164,8 +162,10 @@ class TensorRTModelConverter:
                 self._emergency_memory_cleanup()
                 
             # Crear modelo
-            self.model = resnet18_baseline_att_224x224_A(
-                self.num_parts, 2 * self.num_links
+            self.model = trt_pose.models.resnet18_baseline_att(
+                self.num_parts, 2 * self.num_links,
+                upsample_channels=512,
+                pretrained=False
             ).cuda().eval()
             
             logger.info("✅ Modelo creado en GPU")
@@ -365,10 +365,7 @@ class TensorRTModelConverter:
                 self.model_trt = torch2trt.torch2trt(
                     self.model,
                     [self.test_input],
-                    model_constructor=resnet18_baseline_att_224x224_A,  # si tu versión de torch2trt lo soporta
-                    fp16_mode=self.conversion_config['fp16_mode'],
-                    max_workspace_size=self.conversion_config['max_workspace_size'],
-                    strict_type_constraints=self.conversion_config['strict_type_constraints'],
+                    **conversion_params
                 )
                 conversion_active = False
                 
@@ -894,7 +891,7 @@ ESTADO: CONVERSION_FAILED_INCOMPATIBLE_LAYERS
         try:
             # Crear modelo paso a paso para detectar problemas de memoria
             logger.info("📐 Creando arquitectura del modelo...")
-            self.model = resnet18_baseline_att_224x224_A(
+            self.model = trt_pose.models.resnet18_baseline_att(
                 self.num_parts, 2 * self.num_links
             )
             
