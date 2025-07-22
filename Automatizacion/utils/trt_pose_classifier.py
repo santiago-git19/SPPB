@@ -326,7 +326,9 @@ class TRTPoseClassifier:
         """
         try:
             # Convertir a numpy array si es necesario
-            if isinstance(keypoints, list):
+            if isinstance(keypoints, tuple):
+                keypoints = np.array(keypoints)
+            elif isinstance(keypoints, list):
                 keypoints = np.array(keypoints)
             
             # Asegurar formato correcto

@@ -52,8 +52,8 @@ class TensorRTModelConverter:
         # Configurar monitores de recursos
         self.resource_monitor = JetsonResourceMonitor(
             log_interval=15,  # Más frecuente durante conversión
-            memory_threshold=80.0,  # Más conservador
-            temperature_threshold=70.0  # Más conservador
+            memory_threshold=95, 
+            temperature_threshold=80.0 
         )
         self.swap_manager = JetsonSwapManager(swap_size_gb=4)  # Más swap para conversión
         self.cpu_limiter = JetsonCPULimiter()
@@ -62,8 +62,8 @@ class TensorRTModelConverter:
         self.model_config = {
             'pytorch_model': '/home/mobilenet/Documentos/Trabajo/trt_pose/models/resnet18_baseline_att_224x224_A_epoch_249.pth',
             'topology_file': '/home/mobilenet/Documentos/Trabajo/trt_pose/tasks/human_pose/human_pose.json',
-            'output_model': 'resnet18_baseline_att_224x224_A_epoch_249_trt.pth',
-            'backup_model': 'resnet18_baseline_att_224x224_A_epoch_249_trt_backup.pth'
+            'output_model': '/home/mobilenet/Documentos/Trabajo/trt_pose/models/resnet18_baseline_att_224x224_A_epoch_249_trt.pth',
+            'backup_model': '/home/mobilenet/Documentos/Trabajo/trt_pose/models/resnet18_baseline_att_224x224_A_epoch_249_trt_backup.pth'
         }
         
         # Configuración de conversión optimizada para memoria limitada

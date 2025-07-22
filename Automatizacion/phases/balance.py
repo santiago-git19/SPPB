@@ -12,11 +12,7 @@ class BalancePhase(PhaseBase):
             pose_classifier: Instancia de TRTPoseClassifier (reutilizada)
             config: Configuración del sistema
         """
-        super().__init__(None, config)  # No usar openpose
-        
-        # === PROCESADORES CENTRALIZADOS ===
-        self.pose_processor = pose_processor
-        self.pose_classifier = pose_classifier
+        super().__init__(pose_processor, pose_classifier, config)  # No usar openpose
         
         print("✅ BalancePhase inicializada con procesadores TRT Pose centralizados")
 
@@ -70,6 +66,8 @@ class BalancePhase(PhaseBase):
             
             action = self.wait_for_ready_with_restart(f"Presione ENTER cuando esté en posición para la postura '{posture}'...")
             
+            self.reset_pose_processors()
+
             if action == 'restart':
                 raise Exception("Reinicio solicitado por el usuario")
             elif action == 'full_restart':

@@ -13,13 +13,9 @@ class ChairRisePhase(PhaseBase):
             pose_classifier: Instancia de TRTPoseClassifier (reutilizada)
             config: Configuración del sistema
         """
-        super().__init__(None, config)  # No usar openpose
+        super().__init__(pose_processor, pose_classifier, config) 
         
-        # === PROCESADORES CENTRALIZADOS ===
-        self.pose_processor = pose_processor
-        self.pose_classifier = pose_classifier
-        
-        print("✅ ChairRisePhase inicializada con procesadores TRT Pose centralizados")
+        print("✅ ChairRisePhase inicializada con procesadores TRT Pose")
 
     def reset_test(self):
         """
@@ -37,7 +33,7 @@ class ChairRisePhase(PhaseBase):
             cap_frontal: Captura de video de la cámara frontal
             cap_lateral: Captura de video de la cámara lateral (puede ser None)
         """
-        """
+        
         return self.run_test_with_global_restart(cap)
 
     def _run_phase(self, cap):
@@ -84,6 +80,9 @@ class ChairRisePhase(PhaseBase):
         )
         
         action = self.wait_for_ready_with_restart("Presione ENTER cuando esté en posición y listo para intentar levantarse...")
+
+        self.reset_pose_processors()
+
         
         if action == 'restart':
             raise Exception("Reinicio solicitado por el usuario")

@@ -22,12 +22,7 @@ class GaitSpeedPhase(PhaseBase):
             config: Configuración del sistema
         """
         # Llamar al constructor padre con None para openpose (ya no se usa)
-        super().__init__(None, config)
-        
-        # === PROCESADORES CENTRALIZADOS ===
-        # Usar las instancias ya inicializadas en sppb_test.py
-        self.pose_processor = pose_processor
-        self.pose_classifier = pose_classifier
+        super().__init__(pose_processor, pose_classifier, config)
         
         # === CONFIGURACIÓN ESPECÍFICA DE GAIT SPEED ===
         # Variables para el cálculo de distancia
@@ -262,17 +257,25 @@ class GaitSpeedPhase(PhaseBase):
         walk_times = []
         
         for intento in range(2):
-            print(f"\n🎯 Preparando intento {intento + 1} de 2")
+            self.print_instructions(
+                f"Intento {intento+1} de 2",
+                [
+                    "Colóquese en la posición inicial de la marca de 4 metros",
+                    "Espere la señal para comenzar"
+                ]
+            )
             
             action = self.wait_for_ready_with_restart(f"Presione ENTER cuando esté listo para comenzar el intento {intento+1}...")
             
+            self.reset_pose_processors()
+
             if action == 'restart':
-                raise ValueError("Reinicio solicitado por el usuario")
+                raise Exception("Reinicio solicitado por el usuario")
             elif action == 'full_restart':
                 raise FullRestartRequested("Reinicio completo solicitado por el usuario")
             elif action == 'skip':
                 return self.create_skipped_result('walk', 'user_choice')
-            elif action in ['exit', 'emergency_stop']:
+            elif action == 'exit' or action == 'emergency_            git push -u origin mainstop':
                 return None
             
             # Ejecutar el intento
@@ -318,8 +321,8 @@ class GaitSpeedPhase(PhaseBase):
         distance_covered = 0.0  # metros
         emergency_shown = False
         frames_without_detection = 0
-        max_frames_without_detection = 30  # ~1 segundo a 30fps
-        
+        max_frames_without_detection = 30  # ~2 segundos a 15fps
+
         # Reiniciar estado
         self.previous_position = None
         self.walking_started = False

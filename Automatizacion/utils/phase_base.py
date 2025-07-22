@@ -1,3 +1,10 @@
+import logging
+from typing import Optional, Dict, Any
+from utils.trt_pose_proc import TRTPoseProcessor
+from utils.trt_pose_classifier import TRTPoseClassifier, create_pose_classifier
+
+logger = logging.getLogger(__name__)
+
 class FullRestartRequested(Exception):
     """Excepción personalizada para señalizar que se requiere reiniciar el test completo."""
     pass
@@ -6,11 +13,23 @@ class PhaseBase:
     """
     Clase base para todas las fases del test SPPB.
     Contiene funcionalidad común como la espera de preparación del usuario.
+    Utiliza TRT Pose para detección de keypoints y clasificación de poses.
     """
     
-    def __init__(self, openpose, config):
-        self.openpose = openpose
+    def __init__(self, trt_pose_processor: TRTPoseProcessor, pose_classifier: TRTPoseClassifier, config):
+        """
+        Inicializa la fase base con procesadores TRT Pose
+        
+        Args:
+            trt_pose_processor: Instancia de TRTPoseProcessor para detección de keypoints
+            pose_classifier: Instancia de TRTPoseClassifier para clasificación de poses
+            config: Configuración del sistema
+        """
+        self.trt_pose_processor = trt_pose_processor
+        self.pose_classifier = pose_classifier
         self.config = config
+        
+        # Configurar intervalo de frames
         self.interval = getattr(config, 'fps', 5.0)
         if self.interval:
             self.interval = 1.0 / self.interval
@@ -24,6 +43,29 @@ class PhaseBase:
             'global_attempt': 1,
             'max_global_attempts': 3
         }
+        
+        logger.info(f"✅ PhaseBase inicializada con TRT Pose")
+        logger.info(f"   🔧 Procesador: {type(self.trt_pose_processor).__name__}")
+        logger.info(f"   🎭 Clasificador: {type(self.pose_classifier).__name__}")
+
+
+    def reset_pose_processors(self):
+        """
+        Reinicia el estado de los procesadores de pose
+        """
+        try:
+            # Reiniciar secuencia del clasificador
+            if hasattr(self.pose_classifier, 'reset_sequence'):
+                self.pose_classifier.reset_sequence()
+                logger.info("🔄 Secuencia del clasificador reiniciada")
+                
+            # Reiniciar estado del procesador si tiene método reset
+            if hasattr(self.trt_pose_processor, 'reset'):
+                self.trt_pose_processor.reset()
+                logger.info("🔄 Procesador TRT Pose reiniciado")
+                
+        except Exception as e:
+            logger.warning(f"⚠️ Error reiniciando procesadores: {e}")
 
     def wait_for_ready(self, message="Presione ENTER cuando esté listo para comenzar..."):
         """
@@ -56,10 +98,16 @@ class PhaseBase:
         Las subclases deben sobrescribir este método para reiniciar su estado específico.
         """
         print("\n⚠️  Reiniciando la prueba...")
+        
         # Reiniciar estado básico común
         if hasattr(self, '_last'):
             delattr(self, '_last')
+            
+        # Reiniciar procesadores TRT Pose
+        self.reset_pose_processors()
+        
         print("Estado base reiniciado.")
+        logger.info("🔄 Estado de la fase reiniciado completamente")
 
     def restart_full_test(self):
         """
