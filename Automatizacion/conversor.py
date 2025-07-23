@@ -11,7 +11,7 @@ import trt_pose.models
 num_parts = len(human_pose['keypoints'])
 num_links = len(human_pose['skeleton'])
 
-model = trt_pose.models.resnet18_baseline_att(num_parts, 2 * num_links).cuda().eval()
+model = trt_pose.models.resnet18_baseline_att(num_parts, 2 * num_links, upsample_channels=512).cuda().eval()
 
 
 import torch
