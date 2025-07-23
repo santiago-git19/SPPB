@@ -264,13 +264,6 @@ class TRTPoseClassifier:
             max_copy = min(len(keypoints), self.target_keypoints)
             target_keypoints[:max_copy] = keypoints[:max_copy]
         
-        # Rellenar puntos faltantes con valores aleatorios para x, y y confianza 0.0
-        for i in range(len(target_keypoints)):
-            if np.all(target_keypoints[i] == 0):  # Si el punto está vacío
-                target_keypoints[i, 0] = np.random.uniform(0, 1)  # x aleatorio
-                target_keypoints[i, 1] = np.random.uniform(0, 1)  # y aleatorio
-                target_keypoints[i, 2] = 0.0  # confianza 0.0
-        
         return target_keypoints
     
     def _filter_low_confidence_keypoints(self, keypoints: np.ndarray) -> np.ndarray:
