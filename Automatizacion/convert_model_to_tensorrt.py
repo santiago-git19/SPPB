@@ -62,7 +62,7 @@ class TensorRTModelConverter:
             'width': 224,
             'height': 224,
             'batch_size': 1,
-            'fp16_mode': False,  # Desactivar FP16 para evitar errores de dimensiones
+            'fp16_mode': True,  # Desactivar FP16 para evitar errores de dimensiones
             'max_workspace_size': 1 << 18,  # 256KB (más conservador)
             'strict_type_constraints': False,  # Más flexibilidad en tipos
             'int8_mode': False,  # FP16 es suficiente para Jetson Nano
@@ -411,12 +411,17 @@ class TensorRTModelConverter:
             
             start_time = time.time()
             logger.info("🔄 Ejecutando torch2trt con configuración alternativa...")
-            
+            '''
             self.model_trt = torch2trt.torch2trt(
                 self.model,
                 [self.test_input],
                 **alternative_params
             )
+            '''
+
+            data = torch.zeros((1, 3, self.conversion_config['height'], self.conversion_config['width'])).cuda()
+            self.model_trt = torch2trt.torch2trt(self.model, [data], fp16_mode=True, max_workspace_size=1<<25)
+
             
             elapsed = time.time() - start_time
             logger.info("✅ Conversión alternativa completada en %.1f minutos", elapsed/60)
