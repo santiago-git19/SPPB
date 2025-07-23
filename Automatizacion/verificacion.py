@@ -76,7 +76,7 @@ def main():
     # Configurar modelo
     num_parts = len(human_pose['keypoints'])
     num_links = len(human_pose['skeleton'])
-    model = trt_pose.models.resnet18_baseline_att(num_parts, 2 * num_links, upsample_channels=512).cuda().eval()
+    model = trt_pose.models.resnet18_baseline_att(num_parts, 2 * num_links).cuda().eval()
 
     # Verificar pesos
     verificar_pesos(model, MODEL_WEIGHTS)
