@@ -359,12 +359,18 @@ class TensorRTModelConverter:
             monitor_thread.start()
             
             try:
+                '''
                 # Conversión principal
                 self.model_trt = torch2trt.torch2trt(
                     self.model,
                     [self.test_input],
                     **conversion_params
                 )
+                '''
+                data = torch.zeros((1, 3, self.conversion_config['height'], self.conversion_config['width'])).cuda()
+                self.model_trt = torch2trt.torch2trt(self.model, [data], fp16_mode=True, max_workspace_size=1<<25)
+
+
                 conversion_active = False
                 
                 elapsed = time.time() - start_time
@@ -411,16 +417,13 @@ class TensorRTModelConverter:
             
             start_time = time.time()
             logger.info("🔄 Ejecutando torch2trt con configuración alternativa...")
-            '''
+            
             self.model_trt = torch2trt.torch2trt(
                 self.model,
                 [self.test_input],
                 **alternative_params
             )
-            '''
-
-            data = torch.zeros((1, 3, self.conversion_config['height'], self.conversion_config['width'])).cuda()
-            self.model_trt = torch2trt.torch2trt(self.model, [data], fp16_mode=True, max_workspace_size=1<<25)
+            
 
             
             elapsed = time.time() - start_time
