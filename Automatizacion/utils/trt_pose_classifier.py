@@ -269,9 +269,6 @@ class TRTPoseClassifier:
             # Para formatos no-NVIDIA, usar mapeo directo
             max_copy = min(len(keypoints), self.target_keypoints)
             target_keypoints[:max_copy] = keypoints[:max_copy]
-        
-        print("\n" + str(target_keypoints) + "\n")
-
 
         return target_keypoints
     
@@ -400,7 +397,8 @@ class TRTPoseClassifier:
             
             # Procesar keypoints según formato del modelo
             processed_keypoints = self._convert_keypoints_format(filtered_keypoints)
-            
+            print("\n" + str(processed_keypoints) + "\n")
+
             # Normalizar coordenadas
             normalized_keypoints = self._normalize_keypoints(processed_keypoints)
             
