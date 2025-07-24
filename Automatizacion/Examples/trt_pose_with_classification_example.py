@@ -73,7 +73,7 @@ class TRTPoseWithClassifier:
         self.pose_classifier = create_pose_classifier(
             model_path=pose_classifier_model_path,
             keypoint_format='nvidia',  # Usar formato NVIDIA según documentación oficial
-            sequence_length=15,      
+            sequence_length=7,      
             confidence_threshold=0.07
         )
         
@@ -293,7 +293,7 @@ def main():
         'trt_pose_model': '/home/mobilenet/Documentos/Trabajo/trt_pose/models/resnet18_baseline_att_224x224_A_epoch_249.pth',
         'pose_topology': '/home/mobilenet/Documentos/Trabajo/trt_pose/tasks/human_pose/human_pose.json',
         'pose_classifier_model': '/home/mobilenet/Documentos/Trabajo/SPPB/Automatizacion/models/pose_classification/st-gcn_3dbp_nvidia.engine',
-        'video_source': '/home/mobilenet/Documentos/Trabajo/SPPB/Automatizacion/Videos/Entrada/Levantarse_sentarse.mp4',  # Ruta para archivo de video
+        'video_source': '/home/mobilenet/Documentos/Trabajo/SPPB/Automatizacion/Videos/Entrada/3052594-hd_1080_1920_24fps.mp4',  # Ruta para archivo de video
         'output_video': '/home/mobilenet/Documentos/Trabajo/SPPB/Automatizacion/Videos/Salida/caminando_salida.mp4'  # 'output_with_poses.mp4' para guardar
     }
     
