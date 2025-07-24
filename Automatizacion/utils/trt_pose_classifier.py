@@ -288,8 +288,8 @@ class TRTPoseClassifier:
         low_confidence_mask = keypoints[:, 2] < self.confidence_threshold
         filtered[low_confidence_mask] = [0.0, 0.0, 0.0]
 
-        print(filtered)
-        
+        print("\n" + str(filtered) + "\n")
+
         return filtered
     
     def _normalize_keypoints(self, keypoints: np.ndarray) -> np.ndarray:
