@@ -326,6 +326,67 @@ class TRTPoseClassifier:
                     normalized[valid_mask, 1] = (y_coords - y_center) / y_scale
         
         return normalized
+
+    def _adjust_keypoint_confidence(self, keypoints: np.ndarray, 
+                                   confidence_boost_factor: float = 2.0,
+                                   max_confidence: float = 0.95) -> np.ndarray:
+        """
+        Ajusta la confianza de los keypoints que ya han sido filtrados
+        
+        Esta función SOLO ajusta la confianza de keypoints válidos (conf >= threshold).
+        No realiza filtrado, conversión de formato ni normalización.
+        
+        Fórmula de ajuste de confianza:
+        - Para keypoints válidos (conf >= threshold):
+          new_conf = threshold + (original_conf - threshold) * boost_factor * sigmoid_scale
+        - Donde sigmoid_scale suaviza la transición para evitar cambios abruptos
+        
+        Args:
+            keypoints: Array [num_keypoints, 3] YA FILTRADO (keypoints de baja confianza como (0,0,0))
+            confidence_boost_factor: Factor multiplicador para el incremento de confianza (default: 2.0)
+            max_confidence: Confianza máxima permitida para evitar sobreajuste (default: 0.95)
+            
+        Returns:
+            Array [num_keypoints, 3] con confianzas ajustadas (mismo formato que entrada)
+        """
+        if keypoints.shape[1] != 3:
+            raise ValueError(f"Keypoints deben tener 3 columnas (x, y, conf), recibidas: {keypoints.shape[1]}")
+        
+        # Trabajar con copia para no modificar el original
+        adjusted_keypoints = keypoints.copy()
+        
+        # Encontrar keypoints válidos (los que tienen confianza >= threshold)
+        valid_mask = (keypoints[:, 2] >= self.confidence_threshold)
+        
+        if np.any(valid_mask):
+            valid_confidences = keypoints[valid_mask, 2]
+            
+            # Fórmula de ajuste suave usando función sigmoide
+            # Normalizar confianza al rango [0, 1] desde [threshold, 1]
+            normalized_conf = (valid_confidences - self.confidence_threshold) / (1.0 - self.confidence_threshold)
+            
+            # Aplicar función sigmoide suave para transición no abrupta
+            # sigmoid(x) = 1 / (1 + exp(-k*(x-0.5))) donde k controla la suavidad
+            sigmoid_steepness = 3.0  # Controla qué tan gradual es la transición
+            sigmoid_scale = 1.0 / (1.0 + np.exp(-sigmoid_steepness * (normalized_conf - 0.5)))
+            
+            # Calcular nuevo valor de confianza
+            confidence_increment = (normalized_conf * confidence_boost_factor * sigmoid_scale)
+            new_confidences = self.confidence_threshold + confidence_increment * (1.0 - self.confidence_threshold)
+            
+            # Aplicar límite máximo para evitar sobreajuste
+            new_confidences = np.minimum(new_confidences, max_confidence)
+            
+            # Asignar nuevas confianzas solo a keypoints válidos
+            adjusted_keypoints[valid_mask, 2] = new_confidences
+            
+            logger.debug(f"🎯 Confianza ajustada: {np.sum(valid_mask)} keypoints válidos")
+            logger.debug(f"   📈 Rango original: [{np.min(valid_confidences):.3f}, {np.max(valid_confidences):.3f}]")
+            logger.debug(f"   📈 Rango ajustado: [{np.min(new_confidences):.3f}, {np.max(new_confidences):.3f}]")
+        else:
+            logger.debug("⚠️ No hay keypoints válidos para ajustar confianza")
+        
+        return adjusted_keypoints
     
     def _create_sequence_tensor(self) -> Optional[np.ndarray]:
         """
@@ -396,8 +457,15 @@ class TRTPoseClassifier:
             # Filtrar keypoints de baja confianza
             filtered_keypoints = self._filter_low_confidence_keypoints(keypoints)
             
+            # ✅ NUEVO: Ajustar confianza de keypoints válidos de manera proporcional
+            adjusted_keypoints = self._adjust_keypoint_confidence(
+                filtered_keypoints,           # Ya filtrados (baja confianza como (0,0,0))
+                confidence_boost_factor=2.0,  # Factor de incremento
+                max_confidence=0.95           # Límite máximo
+            )
+            
             # Procesar keypoints según formato del modelo
-            processed_keypoints = self._convert_keypoints_format(filtered_keypoints)
+            processed_keypoints = self._convert_keypoints_format(adjusted_keypoints)
             print("\n" + str(processed_keypoints) + "\n")
 
             # Normalizar coordenadas
