@@ -59,8 +59,8 @@ class TRTPoseClassifier:
         'jumping'        # 5 - Saltando
     ]
     
-    # Mapeo de keypoints COCO (17) a NVIDIA (34) - indices aproximados
-    COCO_TO_NVIDIA_MAPPING = {
+    # Mapeo de keypoints COCO (18) a NVIDIA (34) - indices aproximados
+    '''
         0: 0,    # nose -> head_top
         1: 1,    # left_eye -> left_eye
         2: 2,    # right_eye -> right_eye
@@ -78,6 +78,16 @@ class TRTPoseClassifier:
         14: 14,  # right_knee -> right_knee
         15: 15,  # left_ankle -> left_ankle
         16: 16,  # right_ankle -> right_ankle
+        '''
+    COCO_TO_NVIDIA_MAPPING = {
+        0: 33,    # nose
+        1: 19, 2: 20, 3: 21, 4: 22,           # ojos/orejas
+        5: 13, 6: 16,                        # hombros
+        7: 14, 8: 17,                        # codos
+        9: 15, 10: 18,                      # muñecas
+        11: 2, 12: 5, 13: 3, 14: 6,          # cadera/rodilla
+        15: 4, 16: 7,                       # tobillos
+        17: 11                            # neck
     }
     
     def __init__(self, 

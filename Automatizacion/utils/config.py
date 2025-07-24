@@ -1,10 +1,17 @@
+import os
+
 class Config:
     def __init__(self):
+        # === CONFIGURACIÓN DE RUTAS BASE ===
+        # Ruta base del proyecto (directorio donde se encuentra este archivo)
+        self.base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+
+
         # === CONFIGURACIÓN TRT POSE ===
         # Rutas de modelos para TRT Pose y clasificación
-        self.trt_pose_model = "models/resnet18_baseline_att_224x224_A_epoch_249.pth"
-        self.pose_topology = "models/human_pose.json"
-        self.pose_classifier_model = "models/pose_classification/st-gcn_3dbp_nvidia.engine"
+        self.trt_pose_model = os.path.join(self.base_dir, "models", "resnet18_baseline_att_224x224_A_epoch_249.pth")
+        self.pose_topology = os.path.join(self.base_dir, "models", "human_pose.json")
+        self.pose_classifier_model = os.path.join(self.base_dir, "models", "pose_classification", "st-gcn_3dbp_nvidia.engine")
         
         # === CONFIGURACIÓN DE CÁMARAS ===
         # Cámaras: pueden ser índices (0, 1) o rutas de video
@@ -17,7 +24,7 @@ class Config:
         
         # === CONFIGURACIÓN GENERAL ===
         # Configuración heredada del sistema anterior
-        self.model_folder = "/home/work/openpose/models/"  # Mantener compatibilidad
+        self.model_folder = "/home/Documentos/Trabajo/openpose/models/"  # Mantener compatibilidad
         self.output_base = "/ruta/salida"
         self.fps = 5.0
         self.duration = 30
@@ -37,4 +44,3 @@ class Config:
             'min_movement_threshold': 0.001  # Mínimo movimiento en metros para considerar
         }
         
-        # Otros parámetros globales
