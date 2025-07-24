@@ -80,10 +80,24 @@ class TRTPoseClassifier:
         16: 16,  # right_ankle -> right_ankle
         '''
     COCO_TO_NVIDIA_MAPPING = {
-        0: 33,  1: 19,  2: 20,  3: 21,  4: 22,
-        5: 13,  6: 16,  7: 14,  8: 17,  9: 15,
-        10: 18, 11:  2, 12:  5, 13:  3, 14:  6,
-        15:  4, 16:  7, 17: 11
+        0: 15,   # nose -> índice 15
+     1: 16,   # left_eye -> 16
+     2: 17,   # right_eye -> 17
+     3: 18,   # left_ear -> 18
+     4: 19,   # right_ear -> 19
+     5: 20,   # left_shoulder -> 20
+     6: 21,   # right_shoulder -> 21
+     7: 22,   # left_elbow -> 22
+     8: 23,   # right_elbow -> 23
+     9: 24,   # left_wrist -> 24
+    10: 25,   # right_wrist -> 25
+    11:  1,   # left_hip -> 1
+    12:  2,   # right_hip -> 2
+    13:  4,   # left_knee -> 4
+    14:  5,   # right_knee -> 5
+    15:  7,   # left_ankle -> 7
+    16:  8,   # right_ankle -> 8
+    17:  6    # neck -> 6
     }
     
     def __init__(self, 
