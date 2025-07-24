@@ -73,7 +73,7 @@ class TRTPoseWithClassifier:
         self.pose_classifier = create_pose_classifier(
             model_path=pose_classifier_model_path,
             keypoint_format='nvidia',  # Usar formato NVIDIA según documentación oficial
-            sequence_length=20,      
+            sequence_length=15,      
             confidence_threshold=0.07
         )
         
