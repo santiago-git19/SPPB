@@ -122,7 +122,8 @@ class TRTPoseClassifier:
             raise ValueError(f"Formato no soportado: {keypoint_format}. "
                            f"Soportados: {list(self.KEYPOINT_FORMATS.keys())}")
         
-        self.input_keypoints = self.KEYPOINT_FORMATS[self.keypoint_format]
+        #self.input_keypoints = self.KEYPOINT_FORMATS[self.keypoint_format]
+        self.input_keypoints = self.KEYPOINT_FORMATS['coco']
         
         # Según documentación: el modelo puede usar diferentes graph_layouts
         # No siempre se convierte a NVIDIA - depende del modelo entrenado
