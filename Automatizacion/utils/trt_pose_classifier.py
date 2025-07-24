@@ -270,6 +270,9 @@ class TRTPoseClassifier:
             max_copy = min(len(keypoints), self.target_keypoints)
             target_keypoints[:max_copy] = keypoints[:max_copy]
         
+        print("\n" + str(target_keypoints) + "\n")
+
+
         return target_keypoints
     
     def _filter_low_confidence_keypoints(self, keypoints: np.ndarray) -> np.ndarray:
@@ -287,8 +290,6 @@ class TRTPoseClassifier:
         # Marcar keypoints con confianza baja
         low_confidence_mask = keypoints[:, 2] < self.confidence_threshold
         filtered[low_confidence_mask] = [0.0, 0.0, 0.0]
-
-        print("\n" + str(filtered) + "\n")
 
         return filtered
     
