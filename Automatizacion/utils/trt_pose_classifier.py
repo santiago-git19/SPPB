@@ -460,7 +460,7 @@ class TRTPoseClassifier:
             # ✅ NUEVO: Ajustar confianza de keypoints válidos de manera proporcional
             adjusted_keypoints = self._adjust_keypoint_confidence(
                 filtered_keypoints,           # Ya filtrados (baja confianza como (0,0,0))
-                confidence_boost_factor=2.0,  # Factor de incremento
+                confidence_boost_factor=50.0,  # Factor de incremento
                 max_confidence=0.95           # Límite máximo
             )
             
