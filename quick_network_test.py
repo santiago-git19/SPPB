@@ -1,139 +1,156 @@
 #!/usr/bin/env python3
 """
-Diagnóstico rápido de red para cámaras Orbbec
+Escaneo agresivo para encontrar cámaras Orbbec
 """
 
 import subprocess
-import socket
 import time
 import logging
+from concurrent.futures import ThreadPoolExecutor
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def quick_network_diagnostic():
-    logger.info("🔍 === DIAGNÓSTICO RÁPIDO DE RED ===")
+def aggressive_network_scan():
+    logger.info("� === ESCANEO AGRESIVO DE RED ===")
     
-    # 1. Confirmar configuración
-    logger.info("\n1. 📊 Red configurada correctamente:")
-    logger.info("   ✅ Jetson IP: 192.168.1.2/24")
-    logger.info("   ✅ Interfaz eth0: UP")
-    logger.info("   ✅ Red objetivo: 192.168.1.0/24")
+    # 1. Usar nmap si está disponible
+    try_nmap_scan()
     
-    # 2. Ping a gateway/router
-    logger.info("\n2. 🏓 Ping a gateway:")
-    gateway_ips = ["192.168.1.1", "192.168.1.254"]
+    # 2. Escaneo ARP
+    arp_scan()
     
-    for gateway in gateway_ips:
-        try:
-            result = subprocess.run(['ping', '-c', '2', '-W', '1', gateway],
-                                  capture_output=True, text=True, timeout=5)
-            if result.returncode == 0:
-                logger.info(f"   ✅ Gateway {gateway}: Responde")
-            else:
-                logger.info(f"   ❌ Gateway {gateway}: No responde")
-        except:
-            logger.info(f"   ❌ Gateway {gateway}: Error")
+    # 3. Escaneo paralelo con múltiples pings
+    parallel_ping_scan()
     
-    # 3. Ping a cámaras específicas
-    logger.info("\n3. 📷 Ping a cámaras:")
-    camera_ips = ["192.168.1.10", "192.168.1.11"]
-    
-    for ip in camera_ips:
-        logger.info(f"   Probando {ip}:")
-        
-        # Ping normal
-        try:
-            result = subprocess.run(['ping', '-c', '3', '-W', '2', ip],
-                                  capture_output=True, text=True, timeout=10)
-            if result.returncode == 0:
-                logger.info(f"      ✅ Ping: Responde")
-                
-                # Si responde, probar puertos
-                test_camera_ports(ip)
-            else:
-                logger.info(f"      ❌ Ping: No responde")
-                logger.info(f"         Output: {result.stdout.strip()}")
-        except Exception as e:
-            logger.info(f"      ❌ Ping: Error - {e}")
-    
-    # 4. Escaneo de red completo
-    logger.info("\n4. 🌐 Escaneo de red 192.168.1.x:")
-    scan_network_range()
+    # 4. Escaneo de diferentes redes
+    scan_multiple_networks()
 
-def test_camera_ports(ip):
-    """Prueba puertos específicos de cámara"""
-    camera_ports = [22, 23, 80, 554, 8080, 8554]
+def try_nmap_scan():
+    logger.info("\n1. 🎯 Intentando escaneo con nmap:")
     
-    for port in camera_ports:
-        if test_port(ip, port):
-            logger.info(f"         ✅ Puerto {port}: ABIERTO")
-        else:
-            logger.info(f"         ❌ Puerto {port}: cerrado")
-
-def test_port(ip, port, timeout=2.0):
-    """Prueba conexión a puerto"""
     try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(timeout)
-        result = sock.connect_ex((ip, port))
-        sock.close()
-        return result == 0
-    except:
-        return False
-
-def scan_network_range():
-    """Escanea toda la red 192.168.1.x"""
-    active_devices = []
-    
-    for i in range(1, 255):
-        ip = f"192.168.1.{i}"
+        # Instalar nmap si no está disponible
+        result = subprocess.run(['which', 'nmap'], capture_output=True)
+        if result.returncode != 0:
+            logger.info("   Instalando nmap...")
+            subprocess.run(['sudo', 'apt-get', 'update'], capture_output=True)
+            subprocess.run(['sudo', 'apt-get', 'install', '-y', 'nmap'], capture_output=True)
         
-        # Skip IP propia
-        if ip == "192.168.1.2":
-            continue
-            
-        try:
-            result = subprocess.run(['ping', '-c', '1', '-W', '1', ip],
-                                  capture_output=True, text=True, timeout=3)
-            if result.returncode == 0:
-                active_devices.append(ip)
-                logger.info(f"   ✅ Dispositivo activo: {ip}")
-        except:
-            continue
-    
-    logger.info(f"\n📊 Total dispositivos activos: {len(active_devices)}")
-    
-    if len(active_devices) == 0:
-        logger.warning("⚠️ No se encontraron dispositivos activos")
-        logger.info("💡 Posibles causas:")
-        logger.info("   - Switch apagado o sin alimentación")
-        logger.info("   - Cámaras apagadas o sin PoE")
-        logger.info("   - Cables ethernet desconectados")
-        logger.info("   - Cámaras en IPs diferentes")
+        # Escaneo de red con nmap
+        logger.info("   Escaneando 192.168.1.0/24 con nmap...")
+        result = subprocess.run(['nmap', '-sn', '192.168.1.0/24'], 
+                              capture_output=True, text=True, timeout=30)
+        
+        if result.returncode == 0:
+            logger.info("   Resultado nmap:")
+            for line in result.stdout.split('\n'):
+                if 'Nmap scan report for' in line:
+                    logger.info(f"      {line}")
+        
+    except Exception as e:
+        logger.info(f"   ❌ Error con nmap: {e}")
 
-def suggest_next_steps():
-    logger.info("\n💡 === PRÓXIMOS PASOS ===")
+def arp_scan():
+    logger.info("\n2. � Escaneo ARP:")
     
-    logger.info("1. 🔌 Verificaciones físicas:")
-    logger.info("   • ¿El switch TL-SG1005P tiene LEDs encendidos?")
-    logger.info("   • ¿Las cámaras tienen LEDs indicadores encendidos?")
-    logger.info("   • ¿Los cables ethernet están bien conectados?")
+    try:
+        # Generar tráfico ARP enviando pings
+        logger.info("   Generando tráfico ARP...")
+        
+        def ping_for_arp(ip_suffix):
+            ip = f"192.168.1.{ip_suffix}"
+            try:
+                subprocess.run(['ping', '-c', '1', '-W', '1', ip],
+                             capture_output=True, timeout=2)
+            except:
+                pass
+        
+        # Ping a toda la red para generar entradas ARP
+        with ThreadPoolExecutor(max_workers=50) as executor:
+            futures = [executor.submit(ping_for_arp, i) for i in range(1, 255)]
+            
+            # Esperar un poco
+            time.sleep(2)
+        
+        # Leer tabla ARP
+        logger.info("   Tabla ARP actual:")
+        result = subprocess.run(['arp', '-a'], capture_output=True, text=True)
+        
+        for line in result.stdout.split('\n'):
+            if '192.168.1.' in line and 'incomplete' not in line:
+                logger.info(f"      {line.strip()}")
+                
+    except Exception as e:
+        logger.info(f"   ❌ Error en escaneo ARP: {e}")
+
+def parallel_ping_scan():
+    logger.info("\n3. ⚡ Escaneo paralelo intensivo:")
     
-    logger.info("\n2. ⚡ Verificaciones de alimentación:")
-    logger.info("   • ¿El switch tiene alimentación externa para PoE?")
-    logger.info("   • ¿Las cámaras reciben PoE del switch?")
+    def intensive_ping(ip_suffix):
+        ip = f"192.168.1.{ip_suffix}"
+        
+        # Múltiples pings con diferentes parámetros
+        ping_variants = [
+            ['ping', '-c', '3', '-W', '1', ip],
+            ['ping', '-c', '5', '-W', '2', ip],
+            ['ping', '-c', '1', '-s', '1024', ip],  # Ping con payload grande
+        ]
+        
+        for ping_cmd in ping_variants:
+            try:
+                result = subprocess.run(ping_cmd, capture_output=True, 
+                                      text=True, timeout=10)
+                if result.returncode == 0:
+                    return ip
+            except:
+                continue
+        
+        return None
     
-    logger.info("\n3. 🔧 Configuración de cámaras:")
-    logger.info("   • Las cámaras podrían tener IPs por defecto diferentes")
-    logger.info("   • Usar herramienta de Orbbec para configurar IPs")
-    logger.info("   • Verificar manual de las cámaras Gemini 335Le")
+    logger.info("   Escaneando con múltiples métodos...")
     
-    logger.info("\n4. 🧪 Pruebas adicionales:")
-    logger.info("   • Conectar una cámara directamente (sin switch)")
-    logger.info("   • Usar herramienta de escaneo de red más agresiva")
-    logger.info("   • Verificar con Wireshark si hay tráfico de red")
+    with ThreadPoolExecutor(max_workers=30) as executor:
+        futures = [executor.submit(intensive_ping, i) for i in range(1, 255)]
+        
+        active_ips = []
+        for future in futures:
+            result = future.result()
+            if result:
+                active_ips.append(result)
+                logger.info(f"      ✅ IP activa: {result}")
+    
+    logger.info(f"   Total IPs encontradas: {len(active_ips)}")
+
+def scan_multiple_networks():
+    logger.info("\n4. 🌐 Escaneando múltiples redes:")
+    
+    # Las cámaras podrían estar en diferentes redes
+    networks = [
+        "192.168.0.0/24",
+        "192.168.1.0/24", 
+        "10.0.0.0/24",
+        "172.16.0.0/24"
+    ]
+    
+    for network in networks:
+        logger.info(f"   Escaneando {network}...")
+        
+        base_ip = network.split('/')[0].rsplit('.', 1)[0]
+        
+        # Escaneo rápido de IPs comunes para cámaras
+        common_camera_ips = [1, 10, 11, 100, 101, 168, 200, 254]
+        
+        for suffix in common_camera_ips:
+            ip = f"{base_ip}.{suffix}"
+            
+            try:
+                result = subprocess.run(['ping', '-c', '1', '-W', '1', ip],
+                                      capture_output=True, timeout=3)
+                if result.returncode == 0:
+                    logger.info(f"      ✅ {ip} responde")
+            except:
+                continue
 
 if __name__ == "__main__":
-    quick_network_diagnostic()
-    suggest_next_steps()
+    aggressive_network_scan()
