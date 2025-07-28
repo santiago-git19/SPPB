@@ -79,44 +79,40 @@ class DualOrbbecCapture:
         logger.info("🎥 Inicializando DualOrbbecCapture...")
         self._initialize_cameras()
     
-    def _discover_orbbec_cameras(self) -> List[int]:
-        """
-        Descubre cámaras Orbbec conectadas
-        
-        Returns:
-            Lista de IDs de dispositivos de cámaras Orbbec detectadas
-        """
-        logger.info("🔍 Buscando cámaras Orbbec Gemini 335Le...")
-        
-        orbbec_devices = []
-        
-        # Intentar detectar hasta 10 dispositivos de video
-        for device_id in range(10):
-            try:
-                cap = cv2.VideoCapture(device_id)
+    def _discover_orbbec_cameras_sdk(self) -> List[int]:
+        """Detección usando SDK oficial de Orbbec"""
+        try:
+            # Importar SDK de Orbbec si está disponible
+            from pyorbbecsdk import Context, DeviceList
+            
+            orbbec_devices = []
+            
+            # Crear contexto Orbbec
+            ctx = Context()
+            device_list = ctx.query_devices()
+            
+            logger.info(f"🔍 SDK Orbbec encontró {device_list.device_count()} dispositivos")
+            
+            for i in range(device_list.device_count()):
+                device = device_list.get_device(i)
+                device_info = device.get_device_info()
                 
-                if cap.isOpened():
-                    # Verificar si el dispositivo responde
-                    ret, frame = cap.read()
-                    if ret and frame is not None:
-                        # Verificar resolución típica de Orbbec
-                        height, width = frame.shape[:2]
-                        
-                        # Las Gemini 335Le suelen soportar estas resoluciones
-                        if (width >= 640 and height >= 480) or (width >= 1280 and height >= 720):
-                            orbbec_devices.append(device_id)
-                            logger.info(f"   ✅ Cámara detectada en dispositivo {device_id}: {width}x{height}")
-                        else:
-                            logger.debug(f"   ⚠️ Dispositivo {device_id} con resolución no compatible: {width}x{height}")
-                    
-                cap.release()
+                logger.info(f"   📷 Dispositivo {i}: {device_info.name} "
+                        f"(Serial: {device_info.serial_number})")
                 
-            except Exception as e:
-                logger.debug(f"   ❌ Error probando dispositivo {device_id}: {e}")
-                continue
-        
-        logger.info(f"🎯 Cámaras Orbbec encontradas: {len(orbbec_devices)} dispositivos")
-        return orbbec_devices
+                # Mapear dispositivo SDK a /dev/video*
+                video_device_id = self._map_orbbec_to_video_device(device_info)
+                if video_device_id is not None:
+                    orbbec_devices.append(video_device_id)
+            
+            return orbbec_devices
+            
+        except ImportError:
+            logger.warning("⚠️ SDK de Orbbec no disponible, usando detección básica")
+            return self._discover_orbbec_cameras_basic()
+        except Exception as e:
+            logger.warning(f"⚠️ Error con SDK Orbbec: {e}")
+            return self._discover_orbbec_cameras_basic()
     
     def _initialize_cameras(self) -> bool:
         """
