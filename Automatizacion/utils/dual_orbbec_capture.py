@@ -79,7 +79,7 @@ class DualOrbbecCapture:
         logger.info("🎥 Inicializando DualOrbbecCapture...")
         self._initialize_cameras()
     
-    def _discover_orbbec_cameras_sdk(self) -> List[int]:
+    def _discover_orbbec_cameras(self) -> List[int]:
         """Detección usando SDK oficial de Orbbec"""
         try:
             # Importar SDK de Orbbec si está disponible
