@@ -1,125 +1,120 @@
 #!/usr/bin/env python3
 """
-Verificar si las cámaras Orbbec aparecen como dispositivos UVC
+Probar protocolos específicos de Orbbec
 """
 
-import subprocess
-import cv2
+import socket
+import struct
+import time
 import logging
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def check_uvc_devices():
-    logger.info("� === VERIFICANDO DISPOSITIVOS UVC ===")
+def test_orbbec_protocols():
+    logger.info("🔍 === PROBANDO PROTOCOLOS ORBBEC ===")
     
-    # Método 1: lsusb para ver dispositivos USB
-    logger.info("\n1. 📱 Dispositivos USB:")
-    try:
-        result = subprocess.run(['lsusb'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        output = result.stdout.decode('utf-8')
+    camera_ips = ["192.168.1.10", "192.168.1.11"]
+    
+    for ip in camera_ips:
+        logger.info(f"\n� Probando protocolos para {ip}:")
         
-        for line in output.split('\n'):
-            if line.strip():
-                logger.info(f"   {line}")
-                # Buscar Orbbec específicamente
-                if 'orbbec' in line.lower() or '2bc5' in line.lower():
-                    logger.info(f"   � ¡ORBBEC ENCONTRADO!: {line}")
-                    
-    except Exception as e:
-        logger.error(f"Error ejecutando lsusb: {e}")
-    
-    # Método 2: v4l2-ctl para ver dispositivos de video
-    logger.info("\n2. 📹 Dispositivos de video V4L2:")
-    try:
-        result = subprocess.run(['v4l2-ctl', '--list-devices'], 
-                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        output = result.stdout.decode('utf-8')
-        logger.info(output)
-        
-    except Exception as e:
-        logger.info(f"v4l2-ctl no disponible o error: {e}")
-    
-    # Método 3: Listar /dev/video*
-    logger.info("\n3. 🎥 Dispositivos /dev/video*:")
-    try:
-        import glob
-        video_devices = glob.glob('/dev/video*')
-        
-        if video_devices:
-            for device in sorted(video_devices):
-                logger.info(f"   Encontrado: {device}")
-                test_video_device(device)
-        else:
-            logger.info("   No se encontraron dispositivos /dev/video*")
-            
-    except Exception as e:
-        logger.error(f"Error listando dispositivos de video: {e}")
-    
-    # Método 4: Probar OpenCV con índices de cámara
-    logger.info("\n4. � Probando cámaras con OpenCV:")
-    test_opencv_cameras()
+        # Probar diferentes puertos y protocolos
+        test_orbbec_discovery_protocol(ip)
+        test_raw_socket_scan(ip)
+        test_icmp_responses(ip)
 
-def test_video_device(device):
-    """Probar un dispositivo de video específico"""
-    try:
-        # Obtener información del dispositivo
-        result = subprocess.run(['v4l2-ctl', '-d', device, '--all'], 
-                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        output = result.stdout.decode('utf-8')
-        
-        # Buscar información relevante
-        for line in output.split('\n'):
-            if 'Card type' in line or 'Driver name' in line:
-                logger.info(f"      {line.strip()}")
-                
-    except Exception as e:
-        logger.debug(f"      Error obteniendo info de {device}: {e}")
-
-def test_opencv_cameras():
-    """Probar cámaras usando OpenCV con diferentes índices"""
+def test_orbbec_discovery_protocol(ip):
+    """Probar protocolo de descubrimiento de Orbbec"""
+    logger.info("   1. 🔍 Protocolo de descubrimiento Orbbec:")
     
-    working_cameras = []
+    # Puertos comunes para descubrimiento de dispositivos
+    discovery_ports = [1900, 5353, 8089, 8090, 9999, 10001]
     
-    # Probar índices 0-10
-    for i in range(11):
-        logger.info(f"   Probando cámara índice {i}:")
-        
+    for port in discovery_ports:
         try:
-            cap = cv2.VideoCapture(i)
+            # UDP Socket para descubrimiento
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.settimeout(2.0)
             
-            if cap.isOpened():
-                ret, frame = cap.read()
-                
-                if ret and frame is not None:
-                    logger.info(f"      ✅ Cámara {i}: Funcional - {frame.shape}")
-                    working_cameras.append(i)
-                    
-                    # Obtener propiedades de la cámara
-                    width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
-                    height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
-                    fps = cap.get(cv2.CAP_PROP_FPS)
-                    
-                    logger.info(f"         Resolución: {int(width)}x{int(height)}")
-                    logger.info(f"         FPS: {fps}")
-                else:
-                    logger.info(f"      ❌ Cámara {i}: No puede capturar frames")
-            else:
-                logger.info(f"      ❌ Cámara {i}: No se puede abrir")
-                
-            cap.release()
+            # Mensaje de descubrimiento genérico
+            discovery_msg = b"DISCOVER\r\n"
+            
+            sock.sendto(discovery_msg, (ip, port))
+            
+            try:
+                data, addr = sock.recvfrom(1024)
+                logger.info(f"      ✅ Puerto UDP {port}: Respuesta - {data[:50]}")
+            except socket.timeout:
+                logger.debug(f"      ❌ Puerto UDP {port}: Sin respuesta")
+            
+            sock.close()
             
         except Exception as e:
-            logger.debug(f"      Error probando cámara {i}: {e}")
+            logger.debug(f"      Error UDP puerto {port}: {e}")
+
+def test_raw_socket_scan(ip):
+    """Escaneo más exhaustivo de puertos"""
+    logger.info("   2. 🔎 Escaneo exhaustivo de puertos:")
     
-    return working_cameras
+    # Rangos de puertos a probar
+    port_ranges = [
+        range(1, 100),      # Puertos bien conocidos
+        range(8000, 8100),  # Puertos HTTP alternativos
+        range(9000, 9100),  # Puertos de aplicación
+        range(10000, 10100) # Puertos altos
+    ]
+    
+    open_ports = []
+    
+    for port_range in port_ranges:
+        for port in port_range:
+            if test_port_with_timeout(ip, port, 0.5):
+                open_ports.append(port)
+                logger.info(f"      ✅ Puerto TCP {port}: ABIERTO")
+    
+    if not open_ports:
+        logger.info("      ❌ No se encontraron puertos TCP abiertos")
+    
+    return open_ports
+
+def test_port_with_timeout(ip, port, timeout):
+    """Probar puerto con timeout muy corto"""
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
+        result = sock.connect_ex((ip, port))
+        sock.close()
+        return result == 0
+    except:
+        return False
+
+def test_icmp_responses(ip):
+    """Probar diferentes tipos de ping/ICMP"""
+    logger.info("   3. 🏓 Análisis de respuestas ICMP:")
+    
+    # Diferentes tamaños de ping
+    ping_sizes = [56, 1024, 1472]  # Normal, grande, MTU máximo
+    
+    for size in ping_sizes:
+        try:
+            result = subprocess.run(['ping', '-c', '1', '-s', str(size), ip],
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                  timeout=5)
+            
+            if result.returncode == 0:
+                # Analizar tiempo de respuesta
+                output = result.stdout.decode('utf-8')
+                for line in output.split('\n'):
+                    if 'time=' in line:
+                        time_part = line.split('time=')[1].split()[0]
+                        logger.info(f"      ✅ Ping {size} bytes: {time_part}")
+                        break
+            else:
+                logger.info(f"      ❌ Ping {size} bytes: Sin respuesta")
+                
+        except Exception as e:
+            logger.debug(f"      Error ping {size} bytes: {e}")
 
 if __name__ == "__main__":
-    working_cameras = check_uvc_devices()
-    
-    if working_cameras:
-        logger.info(f"\n✅ ¡ÉXITO! Encontradas {len(working_cameras)} cámaras UVC:")
-        for cam_id in working_cameras:
-            logger.info(f"   Cámara índice: {cam_id}")
-    else:
-        logger.info("\n❌ No se encontraron cámaras UVC funcionales")
+    test_orbbec_protocols()
