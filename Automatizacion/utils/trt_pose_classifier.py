@@ -60,44 +60,25 @@ class TRTPoseClassifier:
     ]
     
     # Mapeo de keypoints COCO (18) a NVIDIA (34) - indices aproximados
-    '''
-        0: 0,    # nose -> head_top
-        1: 1,    # left_eye -> left_eye
-        2: 2,    # right_eye -> right_eye
-        3: 3,    # left_ear -> left_ear
-        4: 4,    # right_ear -> right_ear
-        5: 5,    # left_shoulder -> left_shoulder
-        6: 6,    # right_shoulder -> right_shoulder
-        7: 7,    # left_elbow -> left_elbow
-        8: 8,    # right_elbow -> right_elbow
-        9: 9,    # left_wrist -> left_wrist
-        10: 10,  # right_wrist -> right_wrist
-        11: 11,  # left_hip -> left_hip
-        12: 12,  # right_hip -> right_hip
-        13: 13,  # left_knee -> left_knee
-        14: 14,  # right_knee -> right_knee
-        15: 15,  # left_ankle -> left_ankle
-        16: 16,  # right_ankle -> right_ankle
-        '''
     COCO_TO_NVIDIA_MAPPING = {
         0: 15,   # nose -> índice 15
-     1: 16,   # left_eye -> 16
-     2: 17,   # right_eye -> 17
-     3: 18,   # left_ear -> 18
-     4: 19,   # right_ear -> 19
-     5: 20,   # left_shoulder -> 20
-     6: 21,   # right_shoulder -> 21
-     7: 22,   # left_elbow -> 22
-     8: 23,   # right_elbow -> 23
-     9: 24,   # left_wrist -> 24
-    10: 25,   # right_wrist -> 25
-    11:  1,   # left_hip -> 1
-    12:  2,   # right_hip -> 2
-    13:  4,   # left_knee -> 4
-    14:  5,   # right_knee -> 5
-    15:  7,   # left_ankle -> 7
-    16:  8,   # right_ankle -> 8
-    17:  6    # neck -> 6
+        1: 16,   # left_eye -> 16
+        2: 17,   # right_eye -> 17
+        3: 18,   # left_ear -> 18
+        4: 19,   # right_ear -> 19
+        5: 20,   # left_shoulder -> 20
+        6: 21,   # right_shoulder -> 21
+        7: 22,   # left_elbow -> 22
+        8: 23,   # right_elbow -> 23
+        9: 24,   # left_wrist -> 24
+        10: 25,   # right_wrist -> 25
+        11:  1,   # left_hip -> 1
+        12:  2,   # right_hip -> 2
+        13:  4,   # left_knee -> 4
+        14:  5,   # right_knee -> 5
+        15:  7,   # left_ankle -> 7
+        16:  8,   # right_ankle -> 8
+        17:  6    # neck -> 6
     }
     
     def __init__(self, 
