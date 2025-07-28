@@ -106,13 +106,9 @@ class DualOrbbecCapture:
                     orbbec_devices.append(video_device_id)
             
             return orbbec_devices
-            
-        except ImportError:
-            logger.warning("⚠️ SDK de Orbbec no disponible, usando detección básica")
-            return self._discover_orbbec_cameras_basic()
         except Exception as e:
             logger.warning(f"⚠️ Error con SDK Orbbec: {e}")
-            return self._discover_orbbec_cameras_basic()
+            
     
     def _initialize_cameras(self) -> bool:
         """
