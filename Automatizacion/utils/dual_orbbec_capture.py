@@ -24,6 +24,11 @@ import threading
 from typing import Tuple, Optional, List, Dict
 from pathlib import Path
 import sys
+import socket
+import subprocess
+import ipaddress
+from concurrent.futures import ThreadPoolExecutor
+import requests
 
 # Configurar logging
 logger = logging.getLogger(__name__)
@@ -80,35 +85,179 @@ class DualOrbbecCapture:
         self._initialize_cameras()
     
     def _discover_orbbec_cameras(self) -> List[int]:
-        """Detección usando SDK oficial de Orbbec"""
+        """Detección de cámaras Orbbec a través de red Ethernet"""
         try:
-            # Importar SDK de Orbbec si está disponible
-            from pyorbbecsdk import Context, DeviceList
+            # Método 1: Escaneo de red
+            cameras = self._discover_cameras_network_scan()
+            if cameras:
+                return cameras
             
-            orbbec_devices = []
-            
-            # Crear contexto Orbbec
-            ctx = Context()
-            device_list = ctx.query_devices()
-            
-            logger.info(f"🔍 SDK Orbbec encontró {device_list.device_count()} dispositivos")
-            
-            for i in range(device_list.device_count()):
-                device = device_list.get_device(i)
-                device_info = device.get_device_info()
+            # Método 2: Detección por protocolo RTSP
+            cameras = self._discover_cameras_rtsp()
+            if cameras:
+                return cameras
                 
-                logger.info(f"   📷 Dispositivo {i}: {device_info.name} "
-                        f"(Serial: {device_info.serial_number})")
+            # Método 3: Detección por UPnP/SSDP
+            cameras = self._discover_cameras_upnp()
+            if cameras:
+                return cameras
                 
-                # Mapear dispositivo SDK a /dev/video*
-                video_device_id = self._map_orbbec_to_video_device(device_info)
-                if video_device_id is not None:
-                    orbbec_devices.append(video_device_id)
+            # Método 4: Detección manual por IPs conocidas
+            cameras = self._discover_cameras_manual_ips()
+            return cameras
             
-            return orbbec_devices
         except Exception as e:
-            logger.warning(f"⚠️ Error con SDK Orbbec: {e}")
+            logger.error(f"❌ Error en detección de red: {e}")
+            return []
+
+    def _discover_cameras_network_scan(self) -> List[str]:
+        """Escanea la red local para encontrar cámaras Orbbec"""
+        logger.info("🌐 Escaneando red para cámaras Orbbec...")
+        
+        # Obtener la red local
+        local_networks = self._get_local_networks()
+        cameras = []
+        
+        for network in local_networks:
+            logger.info(f"   🔍 Escaneando red: {network}")
             
+            # Escanear puertos comunes de cámaras IP
+            camera_ports = [80, 554, 8080, 8554, 1935]  # HTTP, RTSP, HTTP-alt, RTSP-alt, RTMP
+            
+            with ThreadPoolExecutor(max_workers=50) as executor:
+                # Crear lista de IPs a escanear
+                network_obj = ipaddress.IPv4Network(network, strict=False)
+                futures = []
+                
+                for ip in network_obj.hosts():
+                    if str(ip) != self._get_local_ip():  # Saltar IP local
+                        for port in camera_ports:
+                            future = executor.submit(self._check_camera_at_ip, str(ip), port)
+                            futures.append(future)
+                
+                # Recopilar resultados
+                for future in futures:
+                    result = future.result()
+                    if result:
+                        cameras.append(result)
+        
+        logger.info(f"📷 Encontradas {len(cameras)} cámaras por escaneo de red")
+        return cameras
+
+    def _get_local_networks(self) -> List[str]:
+        """Obtiene las redes locales disponibles"""
+        networks = []
+        
+        try:
+            # Ejecutar comando ip route para obtener redes
+            result = subprocess.run(['ip', 'route'], capture_output=True, text=True)
+            
+            for line in result.stdout.split('\n'):
+                if 'scope link' in line and '/' in line:
+                    # Extraer red del formato: "192.168.1.0/24 dev eth0 scope link"
+                    parts = line.split()
+                    for part in parts:
+                        if '/' in part and not part.startswith('169.254'):  # Evitar link-local
+                            try:
+                                network = ipaddress.IPv4Network(part, strict=False)
+                                networks.append(str(network))
+                            except:
+                                continue
+            
+            # Si no encuentra redes, usar redes comunes
+            if not networks:
+                networks = ['192.168.1.0/24', '192.168.0.0/24', '10.0.0.0/24']
+                
+        except Exception as e:
+            logger.warning(f"⚠️ Error obteniendo redes: {e}")
+            networks = ['192.168.1.0/24', '192.168.0.0/24']
+        
+        return networks
+
+    def _get_local_ip(self) -> str:
+        """Obtiene la IP local de la Jetson"""
+        try:
+            # Conectar a un servidor externo para obtener IP local
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                s.connect(("8.8.8.8", 80))
+                return s.getsockname()[0]
+        except:
+            return "127.0.0.1"
+
+    def _check_camera_at_ip(self, ip: str, port: int) -> Optional[str]:
+        """Verifica si hay una cámara Orbbec en la IP y puerto dados"""
+        try:
+            # Crear socket con timeout corto
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(0.5)  # 500ms timeout
+            
+            result = sock.connect_ex((ip, port))
+            sock.close()
+            
+            if result == 0:  # Puerto abierto
+                # Verificar si es una cámara Orbbec
+                if self._verify_orbbec_camera(ip, port):
+                    camera_url = f"rtsp://{ip}:{port}" if port in [554, 8554] else f"http://{ip}:{port}"
+                    logger.info(f"   ✅ Cámara Orbbec encontrada: {camera_url}")
+                    return camera_url
+            
+            return None
+            
+        except Exception:
+            return None
+
+    def _verify_orbbec_camera(self, ip: str, port: int) -> bool:
+        """Verifica si el dispositivo es realmente una cámara Orbbec"""
+        try:
+            # Método 1: Verificar headers HTTP
+            if port in [80, 8080]:
+                response = requests.get(f"http://{ip}:{port}", timeout=1)
+                headers = response.headers
+                content = response.text.lower()
+                
+                # Buscar identificadores de Orbbec
+                orbbec_indicators = ['orbbec', 'gemini', '335le', 'depth camera']
+                
+                for indicator in orbbec_indicators:
+                    if (indicator in headers.get('Server', '').lower() or 
+                        indicator in headers.get('User-Agent', '').lower() or
+                        indicator in content):
+                        return True
+            
+            # Método 2: Verificar protocolo RTSP
+            elif port in [554, 8554]:
+                return self._check_rtsp_stream(ip, port)
+            
+            return False
+            
+        except Exception:
+            return False
+
+    def _check_rtsp_stream(self, ip: str, port: int) -> bool:
+        """Verifica si hay un stream RTSP válido"""
+        try:
+            rtsp_urls = [
+                f"rtsp://{ip}:{port}/live",
+                f"rtsp://{ip}:{port}/stream1",
+                f"rtsp://{ip}:{port}/main",
+                f"rtsp://{ip}:{port}/color",
+                f"rtsp://{ip}:{port}/"
+            ]
+            
+            for url in rtsp_urls:
+                # Usar OpenCV para probar el stream RTSP
+                cap = cv2.VideoCapture(url)
+                if cap.isOpened():
+                    ret, frame = cap.read()
+                    cap.release()
+                    if ret and frame is not None:
+                        logger.info(f"   📡 Stream RTSP válido: {url}")
+                        return True
+            
+            return False
+            
+        except Exception:
+            return False
     
     def _initialize_cameras(self) -> bool:
         """
