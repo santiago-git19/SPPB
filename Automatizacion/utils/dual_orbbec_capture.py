@@ -84,180 +84,314 @@ class DualOrbbecCapture:
         logger.info("🎥 Inicializando DualOrbbecCapture...")
         self._initialize_cameras()
     
-    def _discover_orbbec_cameras(self) -> List[int]:
-        """Detección de cámaras Orbbec a través de red Ethernet"""
+    def _discover_orbbec_cameras(self) -> List[str]:
+        """Detección de cámaras Orbbec con IPs conocidas"""
         try:
-            # Método 1: Escaneo de red
-            cameras = self._discover_cameras_network_scan()
-            if cameras:
+            # IPs específicas de tus cámaras Orbbec
+            camera_ips = ["192.168.1.10", "192.168.1.11"]
+            
+            logger.info("🎯 Buscando cámaras Orbbec en IPs conocidas...")
+            
+            # Método 1: Verificación directa de IPs conocidas
+            cameras = self._discover_cameras_known_ips(camera_ips)
+            if len(cameras) >= 2:
                 return cameras
             
-            # Método 2: Detección por protocolo RTSP
-            cameras = self._discover_cameras_rtsp()
+            # Método 2: Escaneo del rango de red si no se encuentran las IPs conocidas
+            cameras = self._discover_cameras_network_range()
             if cameras:
                 return cameras
                 
-            # Método 3: Detección por UPnP/SSDP
-            cameras = self._discover_cameras_upnp()
-            if cameras:
-                return cameras
-                
-            # Método 4: Detección manual por IPs conocidas
-            cameras = self._discover_cameras_manual_ips()
+            # Método 3: Detección por ping y puerto
+            cameras = self._discover_cameras_ping_test(camera_ips)
             return cameras
             
         except Exception as e:
-            logger.error(f"❌ Error en detección de red: {e}")
+            logger.error(f"❌ Error en detección de cámaras: {e}")
             return []
 
-    def _discover_cameras_network_scan(self) -> List[str]:
-        """Escanea la red local para encontrar cámaras Orbbec"""
-        logger.info("🌐 Escaneando red para cámaras Orbbec...")
+    def _discover_cameras_known_ips(self, camera_ips: List[str]) -> List[str]:
+        """Verifica cámaras en IPs específicas conocidas"""
+        logger.info("🔍 Verificando IPs conocidas de cámaras...")
         
-        # Obtener la red local
-        local_networks = self._get_local_networks()
         cameras = []
         
-        for network in local_networks:
-            logger.info(f"   🔍 Escaneando red: {network}")
+        for ip in camera_ips:
+            logger.info(f"   📡 Probando cámara en: {ip}")
             
-            # Escanear puertos comunes de cámaras IP
-            camera_ports = [80, 554, 8080, 8554, 1935]  # HTTP, RTSP, HTTP-alt, RTSP-alt, RTMP
+            # Probar puertos comunes de cámaras Orbbec
+            camera_ports = [554, 8554, 80, 8080, 1935]  # RTSP, HTTP, RTMP
             
-            with ThreadPoolExecutor(max_workers=50) as executor:
-                # Crear lista de IPs a escanear
-                network_obj = ipaddress.IPv4Network(network, strict=False)
-                futures = []
-                
-                for ip in network_obj.hosts():
-                    if str(ip) != self._get_local_ip():  # Saltar IP local
-                        for port in camera_ports:
-                            future = executor.submit(self._check_camera_at_ip, str(ip), port)
-                            futures.append(future)
-                
-                # Recopilar resultados
-                for future in futures:
-                    result = future.result()
-                    if result:
-                        cameras.append(result)
+            for port in camera_ports:
+                if self._test_camera_connection(ip, port):
+                    camera_url = self._build_camera_url(ip, port)
+                    if self._verify_camera_stream(camera_url):
+                        cameras.append(camera_url)
+                        logger.info(f"   ✅ Cámara encontrada: {camera_url}")
+                        break
+            else:
+                logger.warning(f"   ❌ No se pudo conectar a cámara en {ip}")
         
-        logger.info(f"📷 Encontradas {len(cameras)} cámaras por escaneo de red")
         return cameras
 
-    def _get_local_networks(self) -> List[str]:
-        """Obtiene las redes locales disponibles"""
-        networks = []
-        
+    def _test_camera_connection(self, ip: str, port: int) -> bool:
+        """Prueba conexión TCP a una IP y puerto específicos"""
         try:
-            # Ejecutar comando ip route para obtener redes
-            result = subprocess.run(['ip', 'route'], capture_output=True, text=True)
-            
-            for line in result.stdout.split('\n'):
-                if 'scope link' in line and '/' in line:
-                    # Extraer red del formato: "192.168.1.0/24 dev eth0 scope link"
-                    parts = line.split()
-                    for part in parts:
-                        if '/' in part and not part.startswith('169.254'):  # Evitar link-local
-                            try:
-                                network = ipaddress.IPv4Network(part, strict=False)
-                                networks.append(str(network))
-                            except:
-                                continue
-            
-            # Si no encuentra redes, usar redes comunes
-            if not networks:
-                networks = ['192.168.1.0/24', '192.168.0.0/24', '10.0.0.0/24']
-                
-        except Exception as e:
-            logger.warning(f"⚠️ Error obteniendo redes: {e}")
-            networks = ['192.168.1.0/24', '192.168.0.0/24']
-        
-        return networks
-
-    def _get_local_ip(self) -> str:
-        """Obtiene la IP local de la Jetson"""
-        try:
-            # Conectar a un servidor externo para obtener IP local
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-                s.connect(("8.8.8.8", 80))
-                return s.getsockname()[0]
-        except:
-            return "127.0.0.1"
-
-    def _check_camera_at_ip(self, ip: str, port: int) -> Optional[str]:
-        """Verifica si hay una cámara Orbbec en la IP y puerto dados"""
-        try:
-            # Crear socket con timeout corto
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(0.5)  # 500ms timeout
+            sock.settimeout(2.0)  # 2 segundos timeout
             
             result = sock.connect_ex((ip, port))
             sock.close()
             
-            if result == 0:  # Puerto abierto
-                # Verificar si es una cámara Orbbec
-                if self._verify_orbbec_camera(ip, port):
-                    camera_url = f"rtsp://{ip}:{port}" if port in [554, 8554] else f"http://{ip}:{port}"
-                    logger.info(f"   ✅ Cámara Orbbec encontrada: {camera_url}")
-                    return camera_url
-            
-            return None
-            
-        except Exception:
-            return None
-
-    def _verify_orbbec_camera(self, ip: str, port: int) -> bool:
-        """Verifica si el dispositivo es realmente una cámara Orbbec"""
-        try:
-            # Método 1: Verificar headers HTTP
-            if port in [80, 8080]:
-                response = requests.get(f"http://{ip}:{port}", timeout=1)
-                headers = response.headers
-                content = response.text.lower()
+            if result == 0:
+                logger.debug(f"   ✅ Puerto {port} abierto en {ip}")
+                return True
+            else:
+                logger.debug(f"   ❌ Puerto {port} cerrado en {ip}")
+                return False
                 
-                # Buscar identificadores de Orbbec
-                orbbec_indicators = ['orbbec', 'gemini', '335le', 'depth camera']
-                
-                for indicator in orbbec_indicators:
-                    if (indicator in headers.get('Server', '').lower() or 
-                        indicator in headers.get('User-Agent', '').lower() or
-                        indicator in content):
-                        return True
-            
-            # Método 2: Verificar protocolo RTSP
-            elif port in [554, 8554]:
-                return self._check_rtsp_stream(ip, port)
-            
-            return False
-            
-        except Exception:
+        except Exception as e:
+            logger.debug(f"   ❌ Error probando {ip}:{port} - {e}")
             return False
 
-    def _check_rtsp_stream(self, ip: str, port: int) -> bool:
-        """Verifica si hay un stream RTSP válido"""
-        try:
-            rtsp_urls = [
+    def _build_camera_url(self, ip: str, port: int) -> str:
+        """Construye URL de cámara basada en IP y puerto"""
+        if port in [554, 8554]:
+            # Intentar diferentes rutas RTSP comunes para Orbbec
+            rtsp_paths = [
                 f"rtsp://{ip}:{port}/live",
-                f"rtsp://{ip}:{port}/stream1",
-                f"rtsp://{ip}:{port}/main",
+                f"rtsp://{ip}:{port}/stream1", 
                 f"rtsp://{ip}:{port}/color",
+                f"rtsp://{ip}:{port}/rgb",
                 f"rtsp://{ip}:{port}/"
             ]
             
-            for url in rtsp_urls:
-                # Usar OpenCV para probar el stream RTSP
-                cap = cv2.VideoCapture(url)
-                if cap.isOpened():
-                    ret, frame = cap.read()
-                    cap.release()
-                    if ret and frame is not None:
-                        logger.info(f"   📡 Stream RTSP válido: {url}")
-                        return True
+            # Probar cada ruta RTSP
+            for url in rtsp_paths:
+                if self._test_rtsp_url(url):
+                    return url
             
+            # Si ninguna funciona, devolver la primera
+            return rtsp_paths[0]
+            
+        elif port in [80, 8080]:
+            return f"http://{ip}:{port}/video"
+        else:
+            return f"rtsp://{ip}:{port}/"
+
+    def _test_rtsp_url(self, url: str) -> bool:
+        """Prueba si una URL RTSP funciona"""
+        try:
+            cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
+            if cap.isOpened():
+                ret, frame = cap.read()
+                cap.release()
+                if ret and frame is not None:
+                    logger.debug(f"   📹 URL RTSP válida: {url}")
+                    return True
             return False
-            
         except Exception:
             return False
+
+    def _verify_camera_stream(self, camera_url: str) -> bool:
+        """Verifica que el stream de la cámara funcione correctamente"""
+        try:
+            logger.debug(f"   🔍 Verificando stream: {camera_url}")
+            
+            # Configurar captura con timeout
+            if camera_url.startswith('rtsp://'):
+                cap = cv2.VideoCapture(camera_url, cv2.CAP_FFMPEG)
+                # Configuraciones para RTSP
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                cap.set(cv2.CAP_PROP_TIMEOUT, 5000)  # 5 segundos timeout
+            else:
+                cap = cv2.VideoCapture(camera_url)
+            
+            if not cap.isOpened():
+                logger.debug("   ❌ No se pudo abrir stream")
+                return False
+            
+            # Intentar capturar varios frames para asegurar estabilidad
+            successful_frames = 0
+            for attempt in range(5):
+                ret, frame = cap.read()
+                if ret and frame is not None:
+                    successful_frames += 1
+                    logger.debug(f"   📷 Frame {attempt+1}: {frame.shape}")
+                else:
+                    logger.debug(f"   ❌ Falló frame {attempt+1}")
+                
+                time.sleep(0.1)  # Pausa entre frames
+            
+            cap.release()
+            
+            # Considerar válido si al menos 3 de 5 frames fueron exitosos
+            is_valid = successful_frames >= 3
+            logger.debug(f"   {'✅' if is_valid else '❌'} Stream válido: {successful_frames}/5 frames")
+            
+            return is_valid
+            
+        except Exception as e:
+            logger.debug(f"   ❌ Error verificando stream: {e}")
+            return False
+
+    def _discover_cameras_network_range(self) -> List[str]:
+        """Escanea el rango de red 192.168.1.x para encontrar más cámaras"""
+        logger.info("🌐 Escaneando rango 192.168.1.x...")
+        
+        cameras = []
+        base_ip = "192.168.1."
+        
+        # Escanear rango común para cámaras IP (normalmente 10-50)
+        ip_range = list(range(10, 51))  # 192.168.1.10 a 192.168.1.50
+        
+        with ThreadPoolExecutor(max_workers=20) as executor:
+            futures = []
+            
+            for ip_suffix in ip_range:
+                ip = f"{base_ip}{ip_suffix}"
+                future = executor.submit(self._check_ip_for_camera, ip)
+                futures.append(future)
+            
+            for future in futures:
+                result = future.result()
+                if result:
+                    cameras.append(result)
+                    logger.info(f"   ✅ Cámara adicional encontrada: {result}")
+        
+        return cameras
+
+    def _check_ip_for_camera(self, ip: str) -> Optional[str]:
+        """Verifica si hay una cámara en una IP específica"""
+        camera_ports = [554, 8554, 80, 8080]
+        
+        for port in camera_ports:
+            if self._test_camera_connection(ip, port):
+                camera_url = self._build_camera_url(ip, port)
+                if self._verify_camera_stream(camera_url):
+                    return camera_url
+        
+        return None
+
+    def _discover_cameras_ping_test(self, camera_ips: List[str]) -> List[str]:
+        """Método de respaldo usando ping para verificar conectividad"""
+        logger.info("🏓 Verificando conectividad con ping...")
+        
+        cameras = []
+        
+        for ip in camera_ips:
+            if self._ping_host(ip):
+                logger.info(f"   ✅ {ip} responde a ping")
+                
+                # Si responde a ping, asumir que es una cámara y construir URL por defecto
+                default_url = f"rtsp://{ip}:554/live"
+                cameras.append(default_url)
+                logger.info(f"   📷 Usando URL por defecto: {default_url}")
+            else:
+                logger.warning(f"   ❌ {ip} no responde a ping")
+        
+        return cameras
+
+    def _ping_host(self, ip: str) -> bool:
+        """Ejecuta ping para verificar conectividad"""
+        try:
+            result = subprocess.run(
+                ['ping', '-c', '2', '-W', '2', ip],
+                capture_output=True, 
+                text=True, 
+                timeout=5
+            )
+            return result.returncode == 0
+        except Exception:
+            return False
+
+    # Modificar el método de inicialización para manejar URLs de red
+    def _initialize_single_camera(self, camera_side: str) -> bool:
+        """Inicializa una cámara de red con configuración optimizada"""
+        camera_url = self.left_device_id if camera_side == 'left' else self.right_device_id
+        
+        try:
+            logger.info(f"🌐 Inicializando cámara {camera_side} de red: {camera_url}")
+            
+            # Configuración específica para streams de red
+            if camera_url.startswith('rtsp://'):
+                cap = cv2.VideoCapture(camera_url, cv2.CAP_FFMPEG)
+                
+                # Configuraciones optimizadas para RTSP
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                cap.set(cv2.CAP_PROP_FPS, self.fps)
+                cap.set(cv2.CAP_PROP_TIMEOUT, 10000)  # 10 segundos timeout
+                
+                # Configurar resolución si es posible
+                width, height = self.resolution
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+                
+            elif camera_url.startswith('http://'):
+                cap = cv2.VideoCapture(camera_url)
+                
+            else:
+                logger.error(f"❌ Protocolo no soportado en URL: {camera_url}")
+                return False
+            
+            if not cap.isOpened():
+                logger.error(f"❌ No se pudo abrir stream de cámara {camera_side}")
+                return False
+            
+            # Verificar captura inicial
+            logger.info(f"   🔍 Verificando captura inicial...")
+            for attempt in range(5):
+                ret, frame = cap.read()
+                if ret and frame is not None:
+                    logger.info(f"   ✅ Frame capturado: {frame.shape}")
+                    break
+                else:
+                    logger.warning(f"   ⚠️ Intento {attempt+1} falló, reintentando...")
+                    time.sleep(0.5)
+            else:
+                logger.error(f"❌ No se pudo capturar frame de cámara {camera_side}")
+                cap.release()
+                return False
+            
+            # Asignar cámara
+            if camera_side == 'left':
+                self.left_camera = cap
+            else:
+                self.right_camera = cap
+            
+            logger.info(f"✅ Cámara {camera_side} de red inicializada correctamente")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Error inicializando cámara {camera_side} de red: {e}")
+            return False
+
+    # También necesitamos eliminar las líneas que no aplican para red
+    def _get_local_networks(self) -> List[str]:
+        """Para tu configuración específica, solo necesitamos la red 192.168.1.0/24"""
+        return ['192.168.1.0/24']
+
+    def _get_local_ip(self) -> str:
+        """Obtiene la IP local de la Jetson en la red 192.168.1.x"""
+        try:
+            # Buscar interfaz de red que esté en la red 192.168.1.x
+            result = subprocess.run(['ip', 'addr', 'show'], capture_output=True, text=True)
+            
+            for line in result.stdout.split('\n'):
+                if 'inet 192.168.1.' in line and '192.168.1.255' not in line:
+                    # Extraer IP del formato: "inet 192.168.1.100/24 brd 192.168.1.255 scope global eth0"
+                    ip = line.strip().split()[1].split('/')[0]
+                    logger.info(f"📍 IP local detectada: {ip}")
+                    return ip
+            
+            # Si no encuentra IP en 192.168.1.x, usar método genérico
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                s.connect(("192.168.1.1", 80))
+                return s.getsockname()[0]
+                
+        except Exception as e:
+            logger.warning(f"⚠️ Error obteniendo IP local: {e}")
+            return "192.168.1.100"  # IP por defecto asumida
     
     def _initialize_cameras(self) -> bool:
         """
@@ -300,69 +434,6 @@ class DualOrbbecCapture:
         self._is_capturing = True
         
         return True
-    
-    def _initialize_single_camera(self, camera_side: str) -> bool:
-        """
-        Inicializa una cámara individual con configuración optimizada
-        
-        Args:
-            camera_side: 'left' o 'right'
-            
-        Returns:
-            True si la cámara se inicializó correctamente
-        """
-        device_id = self.left_device_id if camera_side == 'left' else self.right_device_id
-        
-        try:
-            logger.info(f"🔧 Inicializando cámara {camera_side} (dispositivo {device_id})...")
-            
-            # Crear captura con backend preferido para Jetson
-            cap = cv2.VideoCapture(device_id, cv2.CAP_V4L2)  # V4L2 es mejor en Linux/Jetson
-            
-            if not cap.isOpened():
-                logger.error(f"❌ No se pudo abrir cámara {camera_side}")
-                return False
-            
-            # Configurar propiedades de captura
-            width, height = self.resolution
-            
-            # Configuración optimizada para Orbbec Gemini 335Le
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-            cap.set(cv2.CAP_PROP_FPS, self.fps)
-            
-            # Configuraciones adicionales para mejor rendimiento
-            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Buffer mínimo para reducir latencia
-            cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)  # Auto exposición
-            cap.set(cv2.CAP_PROP_AUTOFOCUS, 1)  # Auto enfoque si está disponible
-            
-            # Verificar configuración aplicada
-            actual_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            actual_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            actual_fps = cap.get(cv2.CAP_PROP_FPS)
-            
-            logger.info(f"   📐 Resolución aplicada: {actual_width}x{actual_height}")
-            logger.info(f"   📈 FPS aplicado: {actual_fps:.1f}")
-            
-            # Probar captura
-            ret, frame = cap.read()
-            if not ret or frame is None:
-                logger.error(f"❌ No se pudo capturar frame de prueba de cámara {camera_side}")
-                cap.release()
-                return False
-            
-            # Asignar cámara
-            if camera_side == 'left':
-                self.left_camera = cap
-            else:
-                self.right_camera = cap
-            
-            logger.info(f"✅ Cámara {camera_side} inicializada: {frame.shape}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ Error inicializando cámara {camera_side}: {e}")
-            return False
     
     def _release_single_camera(self, camera_side: str):
         """Libera una cámara individual"""
