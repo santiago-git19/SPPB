@@ -560,7 +560,7 @@ if __name__ == "__main__":
         exit(1)
     
     # Crear procesador con modelo TensorRT
-    model_path = "pose_landmark_lite_fp16.engine"
+    model_path = "~/Documentos/Trabajo/SPPB/Automatizacion/models/pose_landmark_lite_fp16.engine"
     
     if not os.path.exists(model_path):
         print(f"❌ Modelo no encontrado: {model_path}")
