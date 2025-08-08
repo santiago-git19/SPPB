@@ -3,12 +3,12 @@
 Dual Orbbec Camera Manager
 ==========================
 
-Clase para gestionar dos cámaras Orbbec Gemini 335Le conectadas a Jetson Nano
-a través de un switch USB, proporcionando captura sincronizada de frames.
+Clase para gestionar dos cámaras Orbbec Gemini 335Le usando el SDK oficial
+de Orbbec (pyorbbecsdk), proporcionando captura sincronizada de frames.
 
 Características:
-- Detección automática de dos cámaras Gemini 335Le
-- Captura sincronizada frame a frame
+- Detección automática de dos cámaras Gemini 335Le usando SDK nativo
+- Captura sincronizada frame a frame con color y depth
 - Manejo automático de desconexiones y reconexiones
 - Integración con OpenCV y el pipeline existente de trt_pose
 
@@ -24,21 +24,27 @@ import threading
 from typing import Tuple, Optional, List, Dict
 from pathlib import Path
 import sys
-import socket
-import subprocess
-import ipaddress
-from concurrent.futures import ThreadPoolExecutor
-import requests
 
 # Configurar logging
 logger = logging.getLogger(__name__)
 
+# Importar SDK de Orbbec
+try:
+    import pyorbbecsdk as ob
+    SDK_AVAILABLE = True
+    logger.info("✅ SDK de Orbbec importado correctamente")
+except ImportError as e:
+    SDK_AVAILABLE = False
+    logger.error("❌ SDK de Orbbec no disponible")
+    logger.error("💡 Instalar con: pip install pyorbbecsdk")
+    logger.error("💡 O compilar desde: https://github.com/orbbec/OrbbecSDK")
+
 class DualOrbbecCapture:
     """
-    Gestor de dos cámaras Orbbec Gemini 335Le para captura sincronizada
+    Gestor de dos cámaras Orbbec Gemini 335Le para captura sincronizada usando SDK nativo
     
     Esta clase maneja la inicialización, captura sincronizada y reconexión
-    automática de dos cámaras Orbbec conectadas vía switch USB.
+    automática de dos cámaras Orbbec usando el SDK oficial pyorbbecsdk.
     """
     
     def __init__(self, 
@@ -46,7 +52,8 @@ class DualOrbbecCapture:
                  fps: int = 30,
                  auto_reconnect: bool = True,
                  max_reconnect_attempts: int = 5,
-                 reconnect_delay: float = 2.0):
+                 reconnect_delay: float = 2.0,
+                 enable_depth: bool = True):
         """
         Inicializa el gestor de cámaras duales
         
@@ -56,18 +63,24 @@ class DualOrbbecCapture:
             auto_reconnect: Activar reconexión automática
             max_reconnect_attempts: Máximo número de intentos de reconexión
             reconnect_delay: Tiempo entre intentos de reconexión (segundos)
+            enable_depth: Habilitar captura de depth además de color
         """
+        if not SDK_AVAILABLE:
+            raise RuntimeError("SDK de Orbbec no disponible. Instalar pyorbbecsdk")
+        
         self.resolution = resolution
         self.fps = fps
         self.auto_reconnect = auto_reconnect
         self.max_reconnect_attempts = max_reconnect_attempts
         self.reconnect_delay = reconnect_delay
+        self.enable_depth = enable_depth
         
-        # Estado de las cámaras
-        self.left_camera: Optional[cv2.VideoCapture] = None
-        self.right_camera: Optional[cv2.VideoCapture] = None
-        self.left_device_id: Optional[int] = None
-        self.right_device_id: Optional[int] = None
+        # Estado de las cámaras usando SDK de Orbbec
+        self.context: Optional[ob.Context] = None
+        self.left_pipeline: Optional[ob.Pipeline] = None
+        self.right_pipeline: Optional[ob.Pipeline] = None
+        self.left_device: Optional[ob.Device] = None
+        self.right_device: Optional[ob.Device] = None
         
         # Control de sincronización
         self._sync_lock = threading.Lock()
@@ -81,368 +94,210 @@ class DualOrbbecCapture:
             'start_time': time.time()
         }
         
-        logger.info("🎥 Inicializando DualOrbbecCapture...")
+        logger.info("🎥 Inicializando DualOrbbecCapture con SDK...")
         self._initialize_cameras()
     
-    def _discover_orbbec_cameras(self) -> List[str]:
-        """Detección de cámaras Orbbec con IPs conocidas"""
+    def _discover_orbbec_cameras(self) -> List[ob.Device]:
+        """Detecta cámaras Orbbec usando el SDK oficial"""
         try:
-            # IPs específicas de tus cámaras Orbbec
-            camera_ips = ["192.168.1.10", "192.168.1.11"]
+            logger.info("🎯 Buscando cámaras Orbbec usando SDK...")
             
-            logger.info("🎯 Buscando cámaras Orbbec en IPs conocidas...")
+            # Crear contexto Orbbec
+            if not self.context:
+                self.context = ob.Context()
             
-            # Método 1: Verificación directa de IPs conocidas
-            cameras = self._discover_cameras_known_ips(camera_ips)
-            if len(cameras) >= 2:
-                return cameras
+            # Obtener lista de dispositivos
+            device_list = self.context.query_devices()
+            device_count = device_list.device_count()
             
-            # Método 2: Escaneo del rango de red si no se encuentran las IPs conocidas
-            cameras = self._discover_cameras_network_range()
-            if cameras:
-                return cameras
-                
-            # Método 3: Detección por ping y puerto
-            cameras = self._discover_cameras_ping_test(camera_ips)
-            return cameras
+            logger.info(f"📱 Dispositivos Orbbec encontrados: {device_count}")
+            
+            if device_count == 0:
+                logger.error("❌ No se encontraron dispositivos Orbbec")
+                return []
+            
+            devices = []
+            for i in range(device_count):
+                try:
+                    device = device_list.get_device(i)
+                    device_info = device.get_device_info()
+                    
+                    logger.info(f"   📷 Dispositivo {i}:")
+                    logger.info(f"      Nombre: {device_info.name()}")
+                    logger.info(f"      Serial: {device_info.serial_number()}")
+                    logger.info(f"      PID: {device_info.pid()}")
+                    logger.info(f"      VID: {device_info.vid()}")
+                    
+                    devices.append(device)
+                    
+                except Exception as e:
+                    logger.warning(f"⚠️ Error accediendo a dispositivo {i}: {e}")
+                    continue
+            
+            if len(devices) < 2:
+                logger.warning(f"⚠️ Solo se encontraron {len(devices)} cámaras, se necesitan 2")
+            
+            return devices
             
         except Exception as e:
-            logger.error(f"❌ Error en detección de cámaras: {e}")
+            logger.error(f"❌ Error detectando cámaras Orbbec: {e}")
             return []
-
-    def _discover_cameras_known_ips(self, camera_ips: List[str]) -> List[str]:
-        """Verifica cámaras en IPs específicas conocidas"""
-        logger.info("🔍 Verificando IPs conocidas de cámaras...")
-        
-        cameras = []
-        
-        for ip in camera_ips:
-            logger.info(f"   📡 Probando cámara en: {ip}")
-            
-            # Probar puertos comunes de cámaras Orbbec
-            camera_ports = [554, 8554, 80, 8080, 1935]  # RTSP, HTTP, RTMP
-            
-            for port in camera_ports:
-                if self._test_camera_connection(ip, port):
-                    camera_url = self._build_camera_url(ip, port)
-                    if self._verify_camera_stream(camera_url):
-                        cameras.append(camera_url)
-                        logger.info(f"   ✅ Cámara encontrada: {camera_url}")
-                        break
-            else:
-                logger.warning(f"   ❌ No se pudo conectar a cámara en {ip}")
-        
-        return cameras
-
-    def _test_camera_connection(self, ip: str, port: int) -> bool:
-        """Prueba conexión TCP a una IP y puerto específicos"""
-        try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(2.0)  # 2 segundos timeout
-            
-            result = sock.connect_ex((ip, port))
-            sock.close()
-            
-            if result == 0:
-                logger.debug(f"   ✅ Puerto {port} abierto en {ip}")
-                return True
-            else:
-                logger.debug(f"   ❌ Puerto {port} cerrado en {ip}")
-                return False
-                
-        except Exception as e:
-            logger.debug(f"   ❌ Error probando {ip}:{port} - {e}")
-            return False
-
-    def _build_camera_url(self, ip: str, port: int) -> str:
-        """Construye URL de cámara basada en IP y puerto"""
-        if port in [554, 8554]:
-            # Intentar diferentes rutas RTSP comunes para Orbbec
-            rtsp_paths = [
-                f"rtsp://{ip}:{port}/live",
-                f"rtsp://{ip}:{port}/stream1", 
-                f"rtsp://{ip}:{port}/color",
-                f"rtsp://{ip}:{port}/rgb",
-                f"rtsp://{ip}:{port}/"
-            ]
-            
-            # Probar cada ruta RTSP
-            for url in rtsp_paths:
-                if self._test_rtsp_url(url):
-                    return url
-            
-            # Si ninguna funciona, devolver la primera
-            return rtsp_paths[0]
-            
-        elif port in [80, 8080]:
-            return f"http://{ip}:{port}/video"
-        else:
-            return f"rtsp://{ip}:{port}/"
-
-    def _test_rtsp_url(self, url: str) -> bool:
-        """Prueba si una URL RTSP funciona"""
-        try:
-            cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
-            if cap.isOpened():
-                ret, frame = cap.read()
-                cap.release()
-                if ret and frame is not None:
-                    logger.debug(f"   📹 URL RTSP válida: {url}")
-                    return True
-            return False
-        except Exception:
-            return False
-
-    def _verify_camera_stream(self, camera_url: str) -> bool:
-        """Verifica que el stream de la cámara funcione correctamente"""
-        try:
-            logger.debug(f"   🔍 Verificando stream: {camera_url}")
-            
-            # Configurar captura con timeout
-            if camera_url.startswith('rtsp://'):
-                cap = cv2.VideoCapture(camera_url, cv2.CAP_FFMPEG)
-                # Configuraciones para RTSP
-                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-                cap.set(cv2.CAP_PROP_TIMEOUT, 5000)  # 5 segundos timeout
-            else:
-                cap = cv2.VideoCapture(camera_url)
-            
-            if not cap.isOpened():
-                logger.debug("   ❌ No se pudo abrir stream")
-                return False
-            
-            # Intentar capturar varios frames para asegurar estabilidad
-            successful_frames = 0
-            for attempt in range(5):
-                ret, frame = cap.read()
-                if ret and frame is not None:
-                    successful_frames += 1
-                    logger.debug(f"   📷 Frame {attempt+1}: {frame.shape}")
-                else:
-                    logger.debug(f"   ❌ Falló frame {attempt+1}")
-                
-                time.sleep(0.1)  # Pausa entre frames
-            
-            cap.release()
-            
-            # Considerar válido si al menos 3 de 5 frames fueron exitosos
-            is_valid = successful_frames >= 3
-            logger.debug(f"   {'✅' if is_valid else '❌'} Stream válido: {successful_frames}/5 frames")
-            
-            return is_valid
-            
-        except Exception as e:
-            logger.debug(f"   ❌ Error verificando stream: {e}")
-            return False
-
-    def _discover_cameras_network_range(self) -> List[str]:
-        """Escanea el rango de red 192.168.1.x para encontrar más cámaras"""
-        logger.info("🌐 Escaneando rango 192.168.1.x...")
-        
-        cameras = []
-        base_ip = "192.168.1."
-        
-        # Escanear rango común para cámaras IP (normalmente 10-50)
-        ip_range = list(range(10, 51))  # 192.168.1.10 a 192.168.1.50
-        
-        with ThreadPoolExecutor(max_workers=20) as executor:
-            futures = []
-            
-            for ip_suffix in ip_range:
-                ip = f"{base_ip}{ip_suffix}"
-                future = executor.submit(self._check_ip_for_camera, ip)
-                futures.append(future)
-            
-            for future in futures:
-                result = future.result()
-                if result:
-                    cameras.append(result)
-                    logger.info(f"   ✅ Cámara adicional encontrada: {result}")
-        
-        return cameras
-
-    def _check_ip_for_camera(self, ip: str) -> Optional[str]:
-        """Verifica si hay una cámara en una IP específica"""
-        camera_ports = [554, 8554, 80, 8080]
-        
-        for port in camera_ports:
-            if self._test_camera_connection(ip, port):
-                camera_url = self._build_camera_url(ip, port)
-                if self._verify_camera_stream(camera_url):
-                    return camera_url
-        
-        return None
-
-    def _discover_cameras_ping_test(self, camera_ips: List[str]) -> List[str]:
-        """Método de respaldo usando ping para verificar conectividad"""
-        logger.info("🏓 Verificando conectividad con ping...")
-        
-        cameras = []
-        
-        for ip in camera_ips:
-            if self._ping_host(ip):
-                logger.info(f"   ✅ {ip} responde a ping")
-                
-                # Si responde a ping, asumir que es una cámara y construir URL por defecto
-                default_url = f"rtsp://{ip}:554/live"
-                cameras.append(default_url)
-                logger.info(f"   📷 Usando URL por defecto: {default_url}")
-            else:
-                logger.warning(f"   ❌ {ip} no responde a ping")
-        
-        return cameras
-
-    def _ping_host(self, ip: str) -> bool:
-        """Ejecuta ping para verificar conectividad"""
-        try:
-            result = subprocess.run(
-                ['ping', '-c', '2', '-W', '2', ip],
-                capture_output=True, 
-                text=True, 
-                timeout=5
-            )
-            return result.returncode == 0
-        except Exception:
-            return False
-
-    # Modificar el método de inicialización para manejar URLs de red
-    def _initialize_single_camera(self, camera_side: str) -> bool:
-        """Inicializa una cámara de red con configuración optimizada"""
-        camera_url = self.left_device_id if camera_side == 'left' else self.right_device_id
-        
-        try:
-            logger.info(f"🌐 Inicializando cámara {camera_side} de red: {camera_url}")
-            
-            # Configuración específica para streams de red
-            if camera_url.startswith('rtsp://'):
-                cap = cv2.VideoCapture(camera_url, cv2.CAP_FFMPEG)
-                
-                # Configuraciones optimizadas para RTSP
-                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-                cap.set(cv2.CAP_PROP_FPS, self.fps)
-                cap.set(cv2.CAP_PROP_TIMEOUT, 10000)  # 10 segundos timeout
-                
-                # Configurar resolución si es posible
-                width, height = self.resolution
-                cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-                
-            elif camera_url.startswith('http://'):
-                cap = cv2.VideoCapture(camera_url)
-                
-            else:
-                logger.error(f"❌ Protocolo no soportado en URL: {camera_url}")
-                return False
-            
-            if not cap.isOpened():
-                logger.error(f"❌ No se pudo abrir stream de cámara {camera_side}")
-                return False
-            
-            # Verificar captura inicial
-            logger.info(f"   🔍 Verificando captura inicial...")
-            for attempt in range(5):
-                ret, frame = cap.read()
-                if ret and frame is not None:
-                    logger.info(f"   ✅ Frame capturado: {frame.shape}")
-                    break
-                else:
-                    logger.warning(f"   ⚠️ Intento {attempt+1} falló, reintentando...")
-                    time.sleep(0.5)
-            else:
-                logger.error(f"❌ No se pudo capturar frame de cámara {camera_side}")
-                cap.release()
-                return False
-            
-            # Asignar cámara
-            if camera_side == 'left':
-                self.left_camera = cap
-            else:
-                self.right_camera = cap
-            
-            logger.info(f"✅ Cámara {camera_side} de red inicializada correctamente")
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ Error inicializando cámara {camera_side} de red: {e}")
-            return False
-
-    # También necesitamos eliminar las líneas que no aplican para red
-    def _get_local_networks(self) -> List[str]:
-        """Para tu configuración específica, solo necesitamos la red 192.168.1.0/24"""
-        return ['192.168.1.0/24']
-
-    def _get_local_ip(self) -> str:
-        """Obtiene la IP local de la Jetson en la red 192.168.1.x"""
-        try:
-            # Buscar interfaz de red que esté en la red 192.168.1.x
-            result = subprocess.run(['ip', 'addr', 'show'], capture_output=True, text=True)
-            
-            for line in result.stdout.split('\n'):
-                if 'inet 192.168.1.' in line and '192.168.1.255' not in line:
-                    # Extraer IP del formato: "inet 192.168.1.100/24 brd 192.168.1.255 scope global eth0"
-                    ip = line.strip().split()[1].split('/')[0]
-                    logger.info(f"📍 IP local detectada: {ip}")
-                    return ip
-            
-            # Si no encuentra IP en 192.168.1.x, usar método genérico
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-                s.connect(("192.168.1.1", 80))
-                return s.getsockname()[0]
-                
-        except Exception as e:
-            logger.warning(f"⚠️ Error obteniendo IP local: {e}")
-            return "192.168.1.100"  # IP por defecto asumida
     
     def _initialize_cameras(self) -> bool:
         """
-        Inicializa ambas cámaras con configuración optimizada
+        Inicializa ambas cámaras usando el SDK de Orbbec
         
         Returns:
             True si ambas cámaras se inicializaron correctamente
         """
-        # Descubrir cámaras disponibles
-        available_cameras = self._discover_orbbec_cameras()
-        
-        if len(available_cameras) < 2:
-            logger.error(f"❌ Se necesitan 2 cámaras Orbbec, encontradas: {len(available_cameras)}")
-            logger.error("💡 Verificar:")
-            logger.error("   - Ambas cámaras están conectadas al switch USB")
-            logger.error("   - El switch USB tiene alimentación suficiente")
-            logger.error("   - Los drivers de Orbbec están instalados")
+        try:
+            # Descubrir cámaras disponibles
+            available_devices = self._discover_orbbec_cameras()
+            
+            if len(available_devices) < 2:
+                logger.error(f"❌ Se necesitan 2 cámaras Orbbec, encontradas: {len(available_devices)}")
+                logger.error("💡 Verificar:")
+                logger.error("   - Ambas cámaras están conectadas por USB")
+                logger.error("   - Los drivers de Orbbec están instalados")
+                logger.error("   - El SDK pyorbbecsdk está correctamente instalado")
+                return False
+            
+            # Asignar dispositivos
+            self.left_device = available_devices[0]
+            self.right_device = available_devices[1]
+            
+            logger.info("📷 Asignando cámaras:")
+            left_info = self.left_device.get_device_info()
+            right_info = self.right_device.get_device_info()
+            logger.info(f"   🔷 Cámara izquierda: {left_info.serial_number()}")
+            logger.info(f"   🔶 Cámara derecha: {right_info.serial_number()}")
+            
+            # Inicializar pipelines
+            if not self._initialize_pipeline('left'):
+                return False
+            
+            if not self._initialize_pipeline('right'):
+                self._release_single_camera('left')
+                return False
+            
+            logger.info("✅ Ambas cámaras inicializadas correctamente")
+            self._is_capturing = True
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Error inicializando cámaras: {e}")
             return False
-        
-        # Asignar dispositivos (el primero como izquierda, segundo como derecha)
-        self.left_device_id = available_cameras[0]
-        self.right_device_id = available_cameras[1]
-        
-        logger.info(f"📷 Asignando cámaras:")
-        logger.info(f"   🔷 Cámara izquierda: dispositivo {self.left_device_id}")
-        logger.info(f"   🔶 Cámara derecha: dispositivo {self.right_device_id}")
-        
-        # Inicializar cámara izquierda
-        success = self._initialize_single_camera('left')
-        if not success:
-            return False
-        
-        # Inicializar cámara derecha
-        success = self._initialize_single_camera('right')
-        if not success:
-            self._release_single_camera('left')
-            return False
-        
-        logger.info("✅ Ambas cámaras inicializadas correctamente")
-        self._is_capturing = True
-        
-        return True
     
-    def _release_single_camera(self, camera_side: str):
-        """Libera una cámara individual"""
-        if camera_side == 'left' and self.left_camera:
-            self.left_camera.release()
-            self.left_camera = None
-        elif camera_side == 'right' and self.right_camera:
-            self.right_camera.release()
-            self.right_camera = None
+    def _initialize_pipeline(self, camera_side: str) -> bool:
+        """Inicializa el pipeline de una cámara específica"""
+        try:
+            device = self.left_device if camera_side == 'left' else self.right_device
+            
+            logger.info(f"🔧 Inicializando pipeline de cámara {camera_side}...")
+            
+            # Crear pipeline
+            pipeline = ob.Pipeline(device)
+            config = ob.Config()
+            
+            # Configurar stream de color
+            if not self._configure_color_stream(pipeline, config):
+                return False
+            
+            # Configurar stream de depth si está habilitado
+            if self.enable_depth:
+                self._configure_depth_stream(pipeline, config)
+            
+            # Iniciar pipeline
+            pipeline.start(config)
+            
+            # Asignar pipeline
+            if camera_side == 'left':
+                self.left_pipeline = pipeline
+            else:
+                self.right_pipeline = pipeline
+            
+            logger.info(f"   ✅ Pipeline de cámara {camera_side} iniciado")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Error inicializando pipeline {camera_side}: {e}")
+            return False
+    
+    def _configure_color_stream(self, pipeline, config) -> bool:
+        """Configura el stream de color para el pipeline"""
+        try:
+            color_profiles = pipeline.get_stream_profile_list(ob.SENSOR_COLOR)
+            if color_profiles.count() > 0:
+                # Buscar perfil que coincida con la resolución deseada
+                color_profile = self._find_best_profile(color_profiles, 'color')
+                if color_profile:
+                    config.enable_stream(color_profile)
+                    logger.info(f"   ✅ Color stream: {color_profile.width()}x{color_profile.height()}@{color_profile.fps()}fps")
+                    return True
+                else:
+                    logger.warning("   ⚠️ No se encontró perfil de color adecuado")
+                    return False
+            else:
+                logger.error("   ❌ No hay perfiles de color disponibles")
+                return False
+        except Exception as e:
+            logger.error(f"   ❌ Error configurando color stream: {e}")
+            return False
+    
+    def _configure_depth_stream(self, pipeline, config):
+        """Configura el stream de depth para el pipeline"""
+        try:
+            depth_profiles = pipeline.get_stream_profile_list(ob.SENSOR_DEPTH)
+            if depth_profiles.count() > 0:
+                depth_profile = self._find_best_profile(depth_profiles, 'depth')
+                if depth_profile:
+                    config.enable_stream(depth_profile)
+                    logger.info(f"   ✅ Depth stream: {depth_profile.width()}x{depth_profile.height()}@{depth_profile.fps()}fps")
+                else:
+                    logger.warning("   ⚠️ No se encontró perfil de depth adecuado")
+            else:
+                logger.warning("   ⚠️ No hay perfiles de depth disponibles")
+        except Exception as e:
+            logger.warning(f"   ⚠️ Error configurando depth stream: {e}")
+    
+    def _find_best_profile(self, profiles, stream_type: str):
+        """Encuentra el mejor perfil de stream basado en la resolución deseada"""
+        try:
+            width, height = self.resolution
+            best_profile = None
+            best_score = float('inf')
+            
+            for i in range(profiles.count()):
+                try:
+                    profile = profiles.get_video_stream_profile(i)
+                    
+                    # Calcular diferencia con resolución deseada
+                    width_diff = abs(profile.width() - width)
+                    height_diff = abs(profile.height() - height)
+                    fps_diff = abs(profile.fps() - self.fps)
+                    
+                    # Score basado en diferencia (menor es mejor)
+                    score = width_diff + height_diff + fps_diff * 0.1
+                    
+                    logger.debug(f"      Perfil {i}: {profile.width()}x{profile.height()}@{profile.fps()}fps (score: {score:.1f})")
+                    
+                    if score < best_score:
+                        best_score = score
+                        best_profile = profile
+                        
+                except Exception as e:
+                    logger.debug(f"      Error evaluando perfil {i}: {e}")
+                    continue
+            
+            if best_profile:
+                logger.info(f"   🎯 Mejor perfil {stream_type}: {best_profile.width()}x{best_profile.height()}@{best_profile.fps()}fps")
+            
+            return best_profile
+            
+        except Exception as e:
+            logger.error(f"Error buscando mejor perfil: {e}")
+            return None
     
     def read_frames(self) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
         """
@@ -451,57 +306,122 @@ class DualOrbbecCapture:
         Returns:
             Tupla (frame_left, frame_right) o (None, None) si falla
         """
-        if not self._is_capturing or not self.left_camera or not self.right_camera:
-            if self.auto_reconnect:
-                logger.warning("⚠️ Cámaras no disponibles, intentando reconectar...")
-                if self._attempt_reconnection():
-                    return self.read_frames()  # Reintentar después de reconectar
+        if not self._is_capturing or not self.left_pipeline or not self.right_pipeline:
+            if self.auto_reconnect and self._attempt_reconnection():
+                return self.read_frames()
             return None, None
         
         with self._sync_lock:
             try:
-                # Captura sincronizada - leer ambas cámaras lo más simultáneamente posible
-                start_time = time.time()
+                # Capturar framesets de ambas cámaras
+                framesets = self._capture_framesets()
+                if not framesets:
+                    return self._handle_capture_failure()
                 
-                # Leer frame izquierdo
-                ret_left, frame_left = self.left_camera.read()
+                left_frameset, right_frameset = framesets
                 
-                # Leer frame derecho inmediatamente después
-                ret_right, frame_right = self.right_camera.read()
+                # Extraer y convertir frames de color
+                frames = self._extract_color_frames(left_frameset, right_frameset)
+                if not frames:
+                    return self._handle_capture_failure()
                 
-                capture_time = time.time() - start_time
+                left_image, right_image = frames
                 
-                # Verificar que ambas capturas fueron exitosas
-                if not ret_left or not ret_right or frame_left is None or frame_right is None:
-                    logger.warning("⚠️ Falló captura de uno o ambos frames")
-                    self.stats['sync_failures'] += 1
-                    
-                    if self.auto_reconnect:
-                        if self._attempt_reconnection():
-                            return self.read_frames()
-                    
-                    return None, None
-                
-                # Verificar sincronización (tiempo de captura razonable)
-                if capture_time > 0.1:  # 100ms es demasiado para captura sincronizada
-                    logger.debug(f"⚠️ Captura lenta: {capture_time*1000:.1f}ms")
-                
+                # Actualizar estadísticas y retornar
                 self.stats['frames_captured'] += 1
+                logger.debug(f"📷 Frames capturados: L{left_image.shape} R{right_image.shape}")
                 
-                logger.debug(f"📷 Frames capturados: L{frame_left.shape} R{frame_right.shape} "
-                           f"({capture_time*1000:.1f}ms)")
-                
-                return frame_left, frame_right
+                return left_image, right_image
                 
             except Exception as e:
                 logger.error(f"❌ Error en captura sincronizada: {e}")
-                self.stats['sync_failures'] += 1
-                
-                if self.auto_reconnect:
-                    if self._attempt_reconnection():
-                        return self.read_frames()
-                
-                return None, None
+                return self._handle_capture_failure()
+    
+    def _capture_framesets(self):
+        """Captura framesets de ambas cámaras con timeout"""
+        start_time = time.time()
+        
+        # Capturar frameset de cámara izquierda
+        left_frameset = self.left_pipeline.wait_for_frames(1000)  # 1 segundo timeout
+        
+        # Capturar frameset de cámara derecha
+        right_frameset = self.right_pipeline.wait_for_frames(1000)
+        
+        capture_time = time.time() - start_time
+        
+        if not left_frameset or not right_frameset:
+            logger.warning("⚠️ No se recibieron framesets de una o ambas cámaras")
+            return None
+        
+        # Verificar tiempo de captura
+        if capture_time > 0.1:  # 100ms es demasiado
+            logger.debug(f"⚠️ Captura lenta: {capture_time*1000:.1f}ms")
+        
+        return left_frameset, right_frameset
+    
+    def _extract_color_frames(self, left_frameset, right_frameset):
+        """Extrae y convierte frames de color de los framesets"""
+        # Extraer frames de color
+        left_color_frame = left_frameset.color_frame()
+        right_color_frame = right_frameset.color_frame()
+        
+        if not left_color_frame or not right_color_frame:
+            logger.warning("⚠️ No se recibieron frames de color de una o ambas cámaras")
+            return None
+        
+        # Convertir a arrays de NumPy
+        left_image = self._frame_to_numpy(left_color_frame)
+        right_image = self._frame_to_numpy(right_color_frame)
+        
+        if left_image is None or right_image is None:
+            logger.warning("⚠️ Error convirtiendo frames a NumPy")
+            return None
+        
+        return left_image, right_image
+    
+    def _handle_capture_failure(self):
+        """Maneja fallos de captura con posible reconexión"""
+        self.stats['sync_failures'] += 1
+        
+        if self.auto_reconnect and self._attempt_reconnection():
+            return self.read_frames()
+        
+        return None, None
+    
+    def _frame_to_numpy(self, frame) -> Optional[np.ndarray]:
+        """Convierte un frame de Orbbec a array de NumPy"""
+        try:
+            # Obtener datos del frame
+            frame_data = frame.data()
+            width = frame.width()
+            height = frame.height()
+            
+            # Convertir según el formato
+            if frame.format() == ob.FORMAT_RGB:
+                # RGB format
+                img_array = np.frombuffer(frame_data, dtype=np.uint8)
+                img_array = img_array.reshape((height, width, 3))
+                # Convertir RGB a BGR para OpenCV
+                img_array = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+            elif frame.format() == ob.FORMAT_BGR:
+                # BGR format (ya compatible con OpenCV)
+                img_array = np.frombuffer(frame_data, dtype=np.uint8)
+                img_array = img_array.reshape((height, width, 3))
+            elif frame.format() == ob.FORMAT_YUYV:
+                # YUYV format
+                img_array = np.frombuffer(frame_data, dtype=np.uint8)
+                img_array = img_array.reshape((height, width, 2))
+                # Convertir YUYV a BGR
+                img_array = cv2.cvtColor(img_array, cv2.COLOR_YUV2BGR_YUYV)
+            else:
+                logger.warning(f"⚠️ Formato de frame no soportado: {frame.format()}")
+                return None
+            
+            return img_array
+            
+        except Exception as e:
+            logger.error(f"❌ Error convirtiendo frame: {e}")
+            return None
     
     def _attempt_reconnection(self) -> bool:
         """
@@ -518,7 +438,7 @@ class DualOrbbecCapture:
         for attempt in range(self.max_reconnect_attempts):
             logger.info(f"   Intento {attempt + 1}/{self.max_reconnect_attempts}")
             
-            # Liberar cámaras actuales
+            # Liberar pipelines actuales
             self._release_cameras()
             
             # Esperar antes de reintentar
@@ -536,17 +456,36 @@ class DualOrbbecCapture:
         self._is_capturing = False
         return False
     
+    def _release_single_camera(self, camera_side: str):
+        """Libera una cámara individual"""
+        try:
+            if camera_side == 'left' and self.left_pipeline:
+                self.left_pipeline.stop()
+                self.left_pipeline = None
+            elif camera_side == 'right' and self.right_pipeline:
+                self.right_pipeline.stop()
+                self.right_pipeline = None
+        except Exception as e:
+            logger.debug(f"Error liberando cámara {camera_side}: {e}")
+    
     def _release_cameras(self):
-        """Libera ambas cámaras"""
+        """Libera ambas cámaras y el contexto"""
         self._is_capturing = False
         
-        if self.left_camera:
-            self.left_camera.release()
-            self.left_camera = None
-        
-        if self.right_camera:
-            self.right_camera.release()
-            self.right_camera = None
+        try:
+            if self.left_pipeline:
+                self.left_pipeline.stop()
+                self.left_pipeline = None
+            
+            if self.right_pipeline:
+                self.right_pipeline.stop()
+                self.right_pipeline = None
+                
+            # No liberar el contexto aquí para permitir reconexión
+            # self.context se libera solo en release() final
+            
+        except Exception as e:
+            logger.debug(f"Error liberando cámaras: {e}")
     
     def is_opened(self) -> bool:
         """
@@ -556,10 +495,8 @@ class DualOrbbecCapture:
             True si ambas cámaras están operativas
         """
         return (self._is_capturing and
-                self.left_camera is not None and 
-                self.right_camera is not None and
-                self.left_camera.isOpened() and 
-                self.right_camera.isOpened())
+                self.left_pipeline is not None and 
+                self.right_pipeline is not None)
     
     def get_statistics(self) -> Dict:
         """
@@ -591,6 +528,10 @@ class DualOrbbecCapture:
         
         self._release_cameras()
         
+        # Liberar contexto
+        if self.context:
+            self.context = None
+        
         # Mostrar estadísticas finales
         stats = self.get_statistics()
         logger.info("📊 Estadísticas finales:")
@@ -614,7 +555,7 @@ class DualOrbbecCapture:
         """Destructor que asegura la liberación de recursos"""
         try:
             self.release()
-        except:
+        except Exception:
             pass  # Evitar errores durante la destrucción
 
 

@@ -2,7 +2,7 @@ from phases.balance import BalancePhase
 from phases.gait_speed import GaitSpeedPhase
 from phases.chair_rise import ChairRisePhase
 from utils.trt_pose_proc import TRTPoseProcessor
-from utils.trt_pose_classifier import TRTPoseClassifier, create_pose_classifier
+from Automatizacion.utils.action_classifier import TRTPoseClassifier, create_pose_classifier
 from results import SPPBResult
 import cv2
 import os

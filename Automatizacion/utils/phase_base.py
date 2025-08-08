@@ -1,7 +1,7 @@
 import logging
 from typing import Optional, Dict, Any
 from utils.trt_pose_proc import TRTPoseProcessor
-from utils.trt_pose_classifier import TRTPoseClassifier, create_pose_classifier
+from Automatizacion.utils.action_classifier import TRTPoseClassifier, create_pose_classifier
 
 logger = logging.getLogger(__name__)
 
