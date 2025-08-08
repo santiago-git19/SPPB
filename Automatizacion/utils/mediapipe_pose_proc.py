@@ -560,7 +560,7 @@ if __name__ == "__main__":
         exit(1)
     
     # Crear procesador con modelo TensorRT
-    model_path = "~/Documentos/Trabajo/SPPB/Automatizacion/models/pose_landmark_lite_fp16.engine"
+    model_path = "Documentos/Trabajo/SPPB/Automatizacion/models/pose_landmark_lite_fp16.engine"
     
     if not os.path.exists(model_path):
         print(f"❌ Modelo no encontrado: {model_path}")
@@ -593,6 +593,18 @@ if __name__ == "__main__":
                 print("🚫 No se encontraron modelos .engine")
                 exit(1)
     
+    # Configurar ruta del video a procesar
+    # ¡CAMBIA ESTA RUTA POR LA DE TU VIDEO!
+    video_path = r"../Videos/Entrada/sentado.mp4"  # <-- MODIFICA ESTA LÍNEA
+    
+    # Configurar ruta del video de salida
+    # ¡CAMBIA ESTA RUTA POR DONDE QUIERES GUARDAR EL RESULTADO!
+    output_video_path = r"../Videos/Salida/video_procesado.mp4"  # <-- MODIFICA ESTA LÍNEA
+
+    # Si no especificas un video, se usará la cámara web
+    use_video_file = True  # Cambiar a False para usar cámara web
+    save_output_video = True  # Cambiar a False para no guardar video
+    
     try:
         processor = MediaPipePoseProcessor(
             model_path=model_path,
@@ -604,11 +616,89 @@ if __name__ == "__main__":
         print(f"❌ Error inicializando procesador: {e}")
         exit(1)
     
-    # Opción 1: Procesar desde cámara web
-    print("\n📷 Iniciando captura desde cámara web...")
-    print("Presiona 'q' para salir")
+    # Determinar fuente de video
+    if use_video_file:
+        # Opción 1: Procesar desde archivo de video
+        if not os.path.exists(video_path):
+            print(f"❌ Video no encontrado: {video_path}")
+            print("💡 Verifique la ruta del video en la variable 'video_path'")
+            print("💡 Formatos soportados: .mp4, .avi, .mov, .mkv, .wmv")
+            
+            # Buscar videos en el directorio actual
+            print("\n🔍 Buscando videos en el directorio actual...")
+            video_extensions = ['.mp4', '.avi', '.mov', '.mkv', '.wmv', '.flv', '.webm']
+            found_videos = []
+            
+            for file in os.listdir('.'):
+                if any(file.lower().endswith(ext) for ext in video_extensions):
+                    found_videos.append(file)
+            
+            if found_videos:
+                print("📁 Videos encontrados:")
+                for video in found_videos:
+                    print(f"   • {video}")
+                video_path = found_videos[0]
+                print(f"🎯 Usando video: {video_path}")
+            else:
+                print("🚫 No se encontraron videos")
+                print("🔄 Cambiando a modo cámara web...")
+                use_video_file = False
+        
+        if use_video_file:
+            print(f"\n📹 Procesando video: {os.path.basename(video_path)}")
+            if save_output_video:
+                print(f"💾 Guardando resultado en: {os.path.basename(output_video_path)}")
+            print("Presiona 'q' para salir o 'SPACE' para pausar/reanudar")
+            cap = cv2.VideoCapture(video_path)
+            
+            # Variables para el video de salida
+            out = None
+            
+            # Obtener información del video
+            if cap.isOpened():
+                fps = cap.get(cv2.CAP_PROP_FPS)
+                frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                duration = frame_count / fps if fps > 0 else 0
+                width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                
+                print("📊 Info del video:")
+                print(f"   • Resolución: {width}x{height}")
+                print(f"   • FPS: {fps:.2f}")
+                print(f"   • Frames: {frame_count}")
+                print(f"   • Duración: {duration:.2f} segundos")
+                
+                # Configurar escritor de video si se va a guardar
+                if save_output_video:
+                    try:
+                        # Crear directorio de salida si no existe
+                        output_dir = os.path.dirname(output_video_path)
+                        if output_dir and not os.path.exists(output_dir):
+                            os.makedirs(output_dir)
+                            print(f"📁 Directorio creado: {output_dir}")
+                        
+                        # Configurar codec y escritor
+                        fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # o 'XVID' para .avi
+                        out = cv2.VideoWriter(output_video_path, fourcc, fps, (width, height))
+                        
+                        if out.isOpened():
+                            print(f"✅ Video de salida configurado: {output_video_path}")
+                        else:
+                            print(f"❌ Error configurando video de salida: {output_video_path}")
+                            save_output_video = False
+                            
+                    except Exception as e:
+                        print(f"❌ Error creando video de salida: {e}")
+                        save_output_video = False
+            else:
+                print(f"❌ No se pudo abrir el video: {video_path}")
+                use_video_file = False
     
-    cap = cv2.VideoCapture(0)
+    if not use_video_file:
+        # Opción 2: Procesar desde cámara web
+        print("\n📷 Iniciando captura desde cámara web...")
+        print("Presiona 'q' para salir")
+        cap = cv2.VideoCapture(0)
     
     if not cap.isOpened():
         print("❌ No se pudo abrir la cámara web")
@@ -646,75 +736,129 @@ if __name__ == "__main__":
         cv2.destroyAllWindows()
     
     else:
-        # Procesar desde cámara web
+        # Procesar desde cámara web o video
         fps_counter = 0
         start_time = time.time()
         total_inference_time = 0.0
+        paused = False
+        current_frame = 0
+        
+        # Variables para el progreso del video
+        if use_video_file:
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            print(f"\n🎬 Iniciando procesamiento de {total_frames} frames...")
         
         while True:
-            ret, frame = cap.read()
+            if not paused:
+                ret, frame = cap.read()
+                
+                if not ret:
+                    if use_video_file:
+                        print("✅ Video procesado completamente")
+                    else:
+                        print("❌ Error leyendo frame de la cámara")
+                    break
+                
+                current_frame += 1
+                
+                # Mostrar progreso para videos
+                if use_video_file and current_frame % 30 == 0:
+                    progress = (current_frame / total_frames) * 100
+                    print(f"⏳ Progreso: {progress:.1f}% ({current_frame}/{total_frames} frames)")
+                
+                # Procesar frame
+                frame_start = time.time()
+                keypoints = processor.process_frame(frame)
+                process_time = time.time() - frame_start
+                total_inference_time += process_time
+                
+                # Crear frame visualizado
+                if keypoints is not None:
+                    # Calcular ángulos
+                    angles = processor.get_pose_angles(keypoints)
+                    
+                    # Visualizar keypoints
+                    visualized = processor.visualize_keypoints(
+                        frame, keypoints,
+                        draw_landmarks=True,
+                        draw_connections=True,
+                        draw_labels=False
+                    )
+                    
+                    # Mostrar información en pantalla
+                    info_text = [
+                        "TensorRT BlazePose",
+                        f"Keypoints: {len(keypoints)}",
+                        f"Process time: {process_time*1000:.1f}ms"
+                    ]
+                    
+                    # Añadir información específica según el modo
+                    if use_video_file:
+                        progress = (current_frame / total_frames) * 100
+                        info_text.extend([
+                            f"Frame: {current_frame}/{total_frames}",
+                            f"Progreso: {progress:.1f}%"
+                        ])
+                    else:
+                        info_text.append(f"FPS: {1/process_time:.1f}")
+                    
+                    # Añadir ángulos a la información
+                    for angle_name, angle_value in angles.items():
+                        info_text.append(f"{angle_name}: {angle_value:.1f}°")
+                    
+                    # Dibujar información
+                    for i, text in enumerate(info_text):
+                        color = (0, 255, 255) if i == 0 else (0, 255, 0)  # Amarillo para título
+                        cv2.putText(visualized, text, (10, 30 + i*25),
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+                    
+                    display_frame = visualized
+                else:
+                    # No se detectaron poses
+                    cv2.putText(frame, "No pose detected (TensorRT)", (10, 30),
+                               cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                    display_frame = frame
+                
+                # Guardar frame en video de salida
+                if save_output_video and out is not None and out.isOpened():
+                    out.write(display_frame)
+                
+                # Mostrar frame
+                cv2.imshow("TensorRT BlazePose - Tiempo Real", display_frame)
             
-            if not ret:
-                print("❌ Error leyendo frame de la cámara")
+            # Controles de teclado
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord('q'):
                 break
+            elif key == ord(' '):  # Barra espaciadora para pausar/reanudar
+                paused = not paused
+                status = "pausado" if paused else "reanudado"
+                print(f"⏸️ Video {status}")
             
-            # Procesar frame
-            frame_start = time.time()
-            keypoints = processor.process_frame(frame)
-            process_time = time.time() - frame_start
-            total_inference_time += process_time
-            
-            # Visualizar resultados
-            if keypoints is not None:
-                # Calcular ángulos
-                angles = processor.get_pose_angles(keypoints)
-                
-                # Visualizar keypoints
-                visualized = processor.visualize_keypoints(
-                    frame, keypoints,
-                    draw_landmarks=True,
-                    draw_connections=True,
-                    draw_labels=False
-                )
-                
-                # Mostrar información en pantalla
-                info_text = [
-                    f"TensorRT BlazePose",
-                    f"Keypoints: {len(keypoints)}",
-                    f"Process time: {process_time*1000:.1f}ms",
-                    f"FPS: {1/process_time:.1f}"
-                ]
-                
-                # Añadir ángulos a la información
-                for angle_name, angle_value in angles.items():
-                    info_text.append(f"{angle_name}: {angle_value:.1f}°")
-                
-                # Dibujar información
-                for i, text in enumerate(info_text):
-                    color = (0, 255, 255) if i == 0 else (0, 255, 0)  # Amarillo para título
-                    cv2.putText(visualized, text, (10, 30 + i*25),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-                
-                cv2.imshow("TensorRT BlazePose - Tiempo Real", visualized)
-            else:
-                # No se detectaron poses
-                cv2.putText(frame, "No pose detected (TensorRT)", (10, 30),
-                           cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-                cv2.imshow("TensorRT BlazePose - Tiempo Real", frame)
-            
-            # Calcular FPS promedio
-            fps_counter += 1
-            if fps_counter % 30 == 0:
-                elapsed = time.time() - start_time
-                avg_fps = fps_counter / elapsed
-                avg_inference = (total_inference_time / fps_counter) * 1000
-                print(f"📊 FPS promedio: {avg_fps:.1f} | Inferencia promedio: {avg_inference:.1f}ms")
-            
-            # Salir con 'q'
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
+            # Calcular FPS promedio (solo si no está pausado)
+            if not paused:
+                fps_counter += 1
+                if fps_counter % 30 == 0:
+                    elapsed = time.time() - start_time
+                    avg_fps = fps_counter / elapsed
+                    avg_inference = (total_inference_time / fps_counter) * 1000
+                    print(f"📊 FPS promedio: {avg_fps:.1f} | Inferencia promedio: {avg_inference:.1f}ms")
         
+        # Cerrar y limpiar recursos
         cap.release()
+        
+        # Finalizar video de salida
+        if save_output_video and out is not None:
+            out.release()
+            if os.path.exists(output_video_path):
+                file_size = os.path.getsize(output_video_path) / (1024 * 1024)  # MB
+                print(f"✅ Video guardado exitosamente:")
+                print(f"   📁 Ruta: {output_video_path}")
+                print(f"   📊 Tamaño: {file_size:.2f} MB")
+                print(f"   🎬 Frames procesados: {current_frame}")
+            else:
+                print(f"❌ Error: El video no se guardó correctamente")
+        
         cv2.destroyAllWindows()
     
     # Limpiar recursos
