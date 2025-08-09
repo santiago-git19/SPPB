@@ -728,7 +728,7 @@ if __name__ == "__main__":
                 draw_labels=True
             )
             
-            cv2.imshow("TensorRT Pose - Ejemplo", visualized)
+            #cv2.imshow("TensorRT Pose - Ejemplo", visualized)
             cv2.waitKey(5000)  # Mostrar por 5 segundos
         else:
             print("🚫 No se detectaron poses en la imagen de ejemplo")
@@ -824,7 +824,7 @@ if __name__ == "__main__":
                     out.write(display_frame)
                 
                 # Mostrar frame
-                cv2.imshow("TensorRT BlazePose - Tiempo Real", display_frame)
+                #cv2.imshow("TensorRT BlazePose - Tiempo Real", display_frame)
             
             # Controles de teclado
             key = cv2.waitKey(1) & 0xFF
