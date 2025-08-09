@@ -455,9 +455,9 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--engine", type=str, default="pose_landmark_lite_fp16.engine", help="Path to .engine file")
-    parser.add_argument("--video", type=str, default=None, help="Video file or camera index (0)")
-    parser.add_argument("--out", type=str, default=None, help="Output video path")
+    parser.add_argument("--engine", type=str, default="../models/pose_landmark_lite_fp16.engine", help="Path to .engine file")
+    parser.add_argument("--video", type=str, default="../Videos/Entrada/sentado.mp4", help="Video file or camera index (0)")
+    parser.add_argument("--out", type=str, default="../Videos/Salida/sentado_out.mp4", help="Output video path")
     parser.add_argument("--show", action="store_true", help="Show live window")
     args = parser.parse_args()
 
