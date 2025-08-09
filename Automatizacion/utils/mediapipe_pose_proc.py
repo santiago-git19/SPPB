@@ -545,6 +545,206 @@ class MediaPipePoseProcessor:
     def __repr__(self) -> str:
         return self.__str__()
 
+    def run_diagnostics(self) -> bool:
+        """
+        Ejecuta pruebas de diagnóstico completas para verificar que todo funciona
+        
+        Returns:
+            bool: True si todas las pruebas pasan, False si hay errores
+        """
+        print("\n🔍 DIAGNÓSTICOS DEL SISTEMA TENSORRT")
+        print("=" * 60)
+        
+        all_tests_passed = True
+        
+        # Test 1: Verificar carga del modelo
+        print("\n1️⃣ Test: Carga del modelo TensorRT")
+        try:
+            if self.engine is not None and self.context is not None:
+                print("   ✅ Modelo cargado correctamente")
+                print(f"   📐 Entrada: {self.input_shape}")
+                print(f"   📊 Salida: {self.output_shape}")
+            else:
+                print("   ❌ Error: Modelo no cargado")
+                all_tests_passed = False
+        except Exception as e:
+            print(f"   ❌ Error verificando modelo: {e}")
+            all_tests_passed = False
+        
+        # Test 2: Verificar memoria GPU
+        print("\n2️⃣ Test: Asignación de memoria GPU")
+        try:
+            if self.d_input is not None and self.d_output is not None:
+                print("   ✅ Memoria GPU asignada correctamente")
+                print(f"   💾 Entrada: {self.input_size * 2} bytes (FP16)")
+                print(f"   💾 Salida: {self.output_size * 2} bytes (FP16)")
+            else:
+                print("   ❌ Error: Memoria GPU no asignada")
+                all_tests_passed = False
+        except Exception as e:
+            print(f"   ❌ Error verificando memoria: {e}")
+            all_tests_passed = False
+        
+        # Test 3: Crear imagen de prueba
+        print("\n3️⃣ Test: Procesamiento de imagen sintética")
+        try:
+            # Crear imagen de prueba con gradiente
+            test_image = np.zeros((480, 640, 3), dtype=np.uint8)
+            
+            # Crear un gradiente simple
+            for i in range(480):
+                for j in range(640):
+                    test_image[i, j] = [i % 256, j % 256, (i + j) % 256]
+            
+            print("   🖼️ Imagen de prueba creada (480x640)")
+            
+            # Preprocesar
+            preprocessed = self._preprocess_frame(test_image)
+            expected_shape = (1, 3, self.input_width, self.input_height)
+            
+            if preprocessed.shape == expected_shape:
+                print(f"   ✅ Preprocesamiento correcto: {preprocessed.shape}")
+                print(f"   🎯 Rango de valores: [{preprocessed.min():.3f}, {preprocessed.max():.3f}]")
+            else:
+                print(f"   ❌ Error en preprocesamiento: {preprocessed.shape} != {expected_shape}")
+                all_tests_passed = False
+                
+        except Exception as e:
+            print(f"   ❌ Error en preprocesamiento: {e}")
+            all_tests_passed = False
+        
+        # Test 4: Inferencia real
+        print("\n4️⃣ Test: Inferencia con TensorRT")
+        try:
+            # Usar la imagen de prueba anterior
+            start_time = time.time()
+            keypoints = self.process_frame(test_image)
+            inference_time = (time.time() - start_time) * 1000
+            
+            if keypoints is not None:
+                print(f"   ✅ Inferencia exitosa en {inference_time:.2f}ms")
+                print(f"   🎯 Keypoints detectados: {len(keypoints)}")
+                
+                # Verificar estructura de keypoints
+                if keypoints.shape == (33, 3):
+                    print(f"   ✅ Estructura correcta: {keypoints.shape}")
+                    
+                    # Verificar rangos de confianza
+                    confidences = keypoints[:, 2]
+                    valid_confidences = np.sum((confidences >= 0) & (confidences <= 1))
+                    print(f"   📊 Confianzas válidas: {valid_confidences}/33")
+                    print(f"   📈 Rango confianza: [{confidences.min():.3f}, {confidences.max():.3f}]")
+                    
+                    if valid_confidences == 33:
+                        print("   ✅ Todas las confianzas en rango válido [0,1]")
+                    else:
+                        print("   ⚠️ Algunas confianzas fuera de rango")
+                else:
+                    print(f"   ❌ Estructura incorrecta: {keypoints.shape} != (33, 3)")
+                    all_tests_passed = False
+            else:
+                print("   ❌ Error: Inferencia retornó None")
+                all_tests_passed = False
+                
+        except Exception as e:
+            print(f"   ❌ Error en inferencia: {e}")
+            all_tests_passed = False
+        
+        # Test 5: Visualización
+        print("\n5️⃣ Test: Generación de visualización")
+        try:
+            if keypoints is not None:
+                visualized = self.visualize_keypoints(
+                    test_image, keypoints,
+                    draw_landmarks=True,
+                    draw_connections=True,
+                    draw_labels=False
+                )
+                
+                if visualized is not None and visualized.shape == test_image.shape:
+                    print("   ✅ Visualización generada correctamente")
+                    print(f"   📐 Tamaño: {visualized.shape}")
+                else:
+                    print("   ❌ Error en generación de visualización")
+                    all_tests_passed = False
+            else:
+                print("   ⚠️ Saltando test (no hay keypoints)")
+                
+        except Exception as e:
+            print(f"   ❌ Error en visualización: {e}")
+            all_tests_passed = False
+        
+        # Test 6: Cálculo de ángulos
+        print("\n6️⃣ Test: Cálculo de ángulos de pose")
+        try:
+            if keypoints is not None:
+                angles = self.get_pose_angles(keypoints)
+                
+                if len(angles) > 0:
+                    print(f"   ✅ Ángulos calculados: {len(angles)}")
+                    for angle_name, angle_value in angles.items():
+                        print(f"   📐 {angle_name}: {angle_value:.1f}°")
+                else:
+                    print("   ⚠️ No se calcularon ángulos (confianza baja)")
+            else:
+                print("   ⚠️ Saltando test (no hay keypoints)")
+                
+        except Exception as e:
+            print(f"   ❌ Error calculando ángulos: {e}")
+            all_tests_passed = False
+        
+        # Test 7: Rendimiento
+        print("\n7️⃣ Test: Rendimiento y estabilidad")
+        try:
+            print("   🚀 Ejecutando 10 inferencias para medir rendimiento...")
+            
+            times = []
+            for i in range(10):
+                start = time.time()
+                result = self.process_frame(test_image)
+                end = time.time()
+                times.append((end - start) * 1000)
+                
+                if result is None:
+                    print(f"   ❌ Inferencia {i+1} falló")
+                    all_tests_passed = False
+                    break
+            
+            if len(times) == 10:
+                avg_time = np.mean(times)
+                std_time = np.std(times)
+                min_time = np.min(times)
+                max_time = np.max(times)
+                
+                print(f"   ✅ Rendimiento estable:")
+                print(f"   ⏱️ Tiempo promedio: {avg_time:.2f}ms")
+                print(f"   📊 Desviación std: {std_time:.2f}ms")
+                print(f"   ⚡ Rango: {min_time:.2f}ms - {max_time:.2f}ms")
+                print(f"   🎯 FPS estimado: {1000/avg_time:.1f}")
+                
+                if std_time < avg_time * 0.1:  # Variación < 10%
+                    print("   ✅ Rendimiento muy estable")
+                elif std_time < avg_time * 0.2:  # Variación < 20%
+                    print("   ✅ Rendimiento estable")
+                else:
+                    print("   ⚠️ Rendimiento variable")
+            
+        except Exception as e:
+            print(f"   ❌ Error en test de rendimiento: {e}")
+            all_tests_passed = False
+        
+        # Resumen final
+        print("\n" + "=" * 60)
+        if all_tests_passed:
+            print("🎉 TODOS LOS TESTS PASARON - SISTEMA FUNCIONANDO CORRECTAMENTE")
+            print("✅ El procesador TensorRT está listo para usar")
+        else:
+            print("❌ ALGUNOS TESTS FALLARON - REVISAR CONFIGURACIÓN")
+            print("💡 Revise los errores anteriores para solucionar problemas")
+        
+        print("=" * 60)
+        return all_tests_passed
+
 
 # Ejemplo de uso
 if __name__ == "__main__":
@@ -612,6 +812,27 @@ if __name__ == "__main__":
             input_height=256,
             confidence_threshold=0.5
         )
+        
+        # Ejecutar diagnósticos automáticamente
+        print("\n🔧 Ejecutando diagnósticos del sistema...")
+        diagnostics_passed = processor.run_diagnostics()
+        
+        if not diagnostics_passed:
+            print("\n⚠️ Se detectaron problemas en los diagnósticos")
+            print("💡 ¿Desea continuar de todos modos? (y/n)")
+            
+            # Para modo automático, continuar sin pedir input
+            # En modo interactivo, descomente la siguiente línea:
+            # user_input = input().lower().strip()
+            user_input = 'y'  # Continuar automáticamente
+            
+            if user_input != 'y':
+                print("🚪 Saliendo del programa")
+                processor.cleanup()
+                exit(1)
+        else:
+            print("\n✅ Todos los diagnósticos pasaron - Continuando...")
+            
     except Exception as e:
         print(f"❌ Error inicializando procesador: {e}")
         exit(1)
