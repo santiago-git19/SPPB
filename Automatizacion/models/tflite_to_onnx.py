@@ -2,8 +2,8 @@ import tf2onnx
 import tensorflow as tf
 
 # Rutas
-tflite_model_path = "pose_landmark_lite.tflite"
-onnx_model_path = "pose_landmark_lite.onnx"
+tflite_model_path = "pose_detection.tflite"
+onnx_model_path = "pose_detection.onnx"
 
 # Convertir directamente desde TFLite
 # (Esta API de tf2onnx es más reciente y evita 'from_function')
