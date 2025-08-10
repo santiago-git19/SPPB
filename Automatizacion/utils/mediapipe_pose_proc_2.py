@@ -126,7 +126,7 @@ class MediaPipePoseProcessor2:
         (15, 17), (15, 19), (15, 21),  # left wrist to hand points
         
         # Arms - Right arm
-        (12, 14), (14, 16),        # right shoulder -> elbow -> wrist
+        (12, 14), (14, 16),        # right sshoulder -> elbow -> wrist
         (16, 18), (16, 20), (16, 22),  # right wrist to hand points
         
         # Body core
