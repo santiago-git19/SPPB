@@ -1,23 +1,7 @@
 #!/usr/bin/env python3
 """
 MediaPipe Pose Processor 2 - Detección de poses usando MediaPipe oficial
-=============================================        self.min_detection_confidence = min_detection_confidence
-        self.min_tracking_confidence = min_tracking_confidence
-        self.static_image_mode = static_image_mode
-        self.model_complexity = model_complexity
-        self.smooth_landmarks = smooth_landmarks
-        
-        # Variables MediaPipe
-        self.pose = None
-        
-        # Cargar modelo MediaPipe
-        self._load_mediapipe_model()
-        
-        logger.info("✅ MediaPipe Pose Processor 2 inicializado correctamente")
-        logger.info(f"   🎯 Confianza detección: {min_detection_confidence}")
-        logger.info(f"   🎯 Confianza tracking: {min_tracking_confidence}")
-        logger.info(f"   🖼️ Modo imagen estática: {static_image_mode}")
-        logger.info(f"   🧠 Complejidad modelo: {model_complexity}")=========
+========================================================================
 
 Clase para procesar frames de imágenes y detectar keypoints de poses humanas
 usando la librería oficial de MediaPipe PoseLandmarker.
@@ -126,7 +110,7 @@ class MediaPipePoseProcessor2:
         (15, 17), (15, 19), (15, 21),  # left wrist to hand points
         
         # Arms - Right arm
-        (12, 14), (14, 16),        # right sshoulder -> elbow -> wrist
+        (12, 14), (14, 16),        # right shoulder -> elbow -> wrist
         (16, 18), (16, 20), (16, 22),  # right wrist to hand points
         
         # Body core
@@ -167,7 +151,6 @@ class MediaPipePoseProcessor2:
         self.static_image_mode = static_image_mode
         self.model_complexity = model_complexity
         self.smooth_landmarks = smooth_landmarks
-        self.enable_segmentation = enable_segmentation
         
         # Variables MediaPipe
         self.pose = None
