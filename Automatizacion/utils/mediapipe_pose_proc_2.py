@@ -33,9 +33,10 @@ logger = logging.getLogger(__name__)
 # Importar MediaPipe
 try:
     import mediapipe as mp
-    from mediapipe.tasks import python
-    from mediapipe.tasks.python import vision
-    from mediapipe.framework.formats import landmark_pb2
+    # Usar mediapipe.solutions para compatibilidad con versiones anteriores
+    mp_pose = mp.solutions.pose
+    mp_drawing = mp.solutions.drawing_utils
+    mp_drawing_styles = mp.solutions.drawing_styles
     MP_AVAILABLE = True
     logger.info("✅ MediaPipe importado correctamente")
 except ImportError as e:
@@ -128,35 +129,35 @@ class MediaPipePoseProcessor2:
     ]
     
     def __init__(self, 
-                 model_path: Optional[str] = None,
                  min_detection_confidence: float = 0.5,
                  min_tracking_confidence: float = 0.5,
-                 num_poses: int = 1,
-                 output_segmentation_masks: bool = False,
-                 running_mode: str = "IMAGE"):
+                 static_image_mode: bool = False,
+                 model_complexity: int = 1,
+                 smooth_landmarks: bool = True,
+                 enable_segmentation: bool = False):
         """
         Inicializa el procesador de poses MediaPipe
         
         Args:
-            model_path: Ruta al modelo personalizado (opcional, usa modelo por defecto)
             min_detection_confidence: Confianza mínima para detección (0.0-1.0)
             min_tracking_confidence: Confianza mínima para tracking (0.0-1.0)
-            num_poses: Número máximo de poses a detectar
-            output_segmentation_masks: Si generar máscaras de segmentación
-            running_mode: Modo de ejecución ("IMAGE", "VIDEO", "LIVE_STREAM")
+            static_image_mode: Si tratar cada imagen independientemente
+            model_complexity: Complejidad del modelo (0, 1, 2)
+            smooth_landmarks: Si suavizar landmarks entre frames
+            enable_segmentation: Si generar máscaras de segmentación
         """
         if not MP_AVAILABLE:
             raise ImportError("MediaPipe es requerido. Instale con: pip install mediapipe")
         
-        self.model_path = model_path
         self.min_detection_confidence = min_detection_confidence
         self.min_tracking_confidence = min_tracking_confidence
-        self.num_poses = num_poses
-        self.output_segmentation_masks = output_segmentation_masks
-        self.running_mode = running_mode.upper()
+        self.static_image_mode = static_image_mode
+        self.model_complexity = model_complexity
+        self.smooth_landmarks = smooth_landmarks
+        self.enable_segmentation = enable_segmentation
         
         # Variables MediaPipe
-        self.pose_landmarker = None
+        self.pose = None
         
         # Cargar modelo MediaPipe
         self._load_mediapipe_model()
@@ -164,36 +165,28 @@ class MediaPipePoseProcessor2:
         logger.info("✅ MediaPipe Pose Processor 2 inicializado correctamente")
         logger.info(f"   🎯 Confianza detección: {min_detection_confidence}")
         logger.info(f"   🎯 Confianza tracking: {min_tracking_confidence}")
-        logger.info(f"   👥 Max poses: {num_poses}")
-        logger.info(f"   🎮 Modo: {running_mode}")
+        logger.info(f"   �️ Modo imagen estática: {static_image_mode}")
+        logger.info(f"   🧠 Complejidad modelo: {model_complexity}")
         
     def _load_mediapipe_model(self):
-        """Carga el modelo MediaPipe PoseLandmarker"""
+        """Carga el modelo MediaPipe Pose usando mediapipe.solutions"""
         try:
-            # Configurar opciones base
-            base_options = python.BaseOptions(
-                model_asset_path=self.model_path if self.model_path else None
+            # Inicializar MediaPipe Pose usando solutions
+            self.pose = mp_pose.Pose(
+                static_image_mode=self.static_image_mode,
+                model_complexity=self.model_complexity,
+                smooth_landmarks=self.smooth_landmarks,
+                enable_segmentation=self.enable_segmentation,
+                min_detection_confidence=self.min_detection_confidence,
+                min_tracking_confidence=self.min_tracking_confidence
             )
             
-            # Configurar opciones del PoseLandmarker
-            options = vision.PoseLandmarkerOptions(
-                base_options=base_options,
-                running_mode=getattr(vision.RunningMode, self.running_mode),
-                min_pose_detection_confidence=self.min_detection_confidence,
-                min_pose_presence_confidence=self.min_tracking_confidence,
-                min_tracking_confidence=self.min_tracking_confidence,
-                num_poses=self.num_poses,
-                output_segmentation_masks=self.output_segmentation_masks
-            )
-            
-            # Crear el PoseLandmarker
-            self.pose_landmarker = vision.PoseLandmarker.create_from_options(options)
-            
-            logger.info("✅ Modelo MediaPipe PoseLandmarker cargado correctamente")
+            logger.info("✅ Modelo MediaPipe Pose cargado exitosamente")
             
         except Exception as e:
-            logger.error(f"❌ Error cargando modelo MediaPipe: {e}")
-            raise
+            error_msg = f"❌ Error cargando modelo MediaPipe: {e}"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
     
     def process_frame(self, frame: np.ndarray) -> Optional[np.ndarray]:
         """
@@ -214,35 +207,21 @@ class MediaPipePoseProcessor2:
             # Convertir BGR a RGB para MediaPipe
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             
-            # Crear imagen MediaPipe
-            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
-            
-            # Procesar con MediaPipe
-            if self.running_mode == "IMAGE":
-                result = self.pose_landmarker.detect(mp_image)
-            elif self.running_mode == "VIDEO":
-                # Para video necesitamos timestamp
-                timestamp_ms = int(time.time() * 1000)
-                result = self.pose_landmarker.detect_for_video(mp_image, timestamp_ms)
-            else:
-                logger.warning("⚠️ Modo LIVE_STREAM no soportado en este método")
-                return None
+            # Procesar con MediaPipe usando solutions.pose
+            results = self.pose.process(rgb_frame)
             
             # Extraer keypoints si se detectaron poses
-            if result.pose_landmarks and len(result.pose_landmarks) > 0:
-                # Tomar la primera pose detectada
-                pose_landmarks = result.pose_landmarks[0]
-                
+            if results.pose_landmarks:
                 # Convertir a formato [33, 3]
                 keypoints = np.zeros((33, 3), dtype=np.float32)
                 
                 height, width = frame.shape[:2]
                 
-                for i, landmark in enumerate(pose_landmarks):
+                for i, landmark in enumerate(results.pose_landmarks.landmark):
                     # Convertir coordenadas normalizadas a píxeles
                     x = landmark.x * width
                     y = landmark.y * height
-                    confidence = landmark.visibility  # o landmark.presence
+                    confidence = landmark.visibility  # Usar visibility como confidence
                     
                     keypoints[i] = [x, y, confidence]
                 
@@ -464,9 +443,9 @@ class MediaPipePoseProcessor2:
     def cleanup(self):
         """Libera recursos de MediaPipe"""
         try:
-            if self.pose_landmarker is not None:
-                self.pose_landmarker.close()
-                self.pose_landmarker = None
+            if self.pose is not None:
+                self.pose.close()
+                self.pose = None
                 
             logger.info("✅ Recursos MediaPipe liberados correctamente")
             
