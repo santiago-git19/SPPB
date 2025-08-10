@@ -47,83 +47,83 @@ class MediaPipePoseProcessor:
     Procesador de poses usando TensorRT con modelo MediaPipe BlazePose
     
     Utiliza el modelo pose_landmark_lite_fp16.engine con TensorRT para detectar
-    33 keypoints del cuerpo humano según la topología oficial:
-    0: nose, 1: right_eye_inner, 2: right_eye, 3: right_eye_outer,
-    4: left_eye_inner, 5: left_eye, 6: left_eye_outer,
-    7: right_ear, 8: left_ear, 9: mouth_right, 10: mouth_left,
-    11: right_shoulder, 12: left_shoulder, 13: right_elbow, 14: left_elbow,
-    15: right_wrist, 16: left_wrist, 17: right_pinky_knuckle, 18: left_pinky_knuckle,
-    19: right_index_knuckle, 20: left_index_knuckle, 21: right_thumb_knuckle, 22: left_thumb_knuckle,
-    23: right_hip, 24: left_hip, 25: right_knee, 26: left_knee,
-    27: right_ankle, 28: left_ankle, 29: right_heel, 30: left_heel,
-    31: right_foot_index, 32: left_foot_index
+    33 keypoints del cuerpo humano según la topología corregida:
+    0: nose, 1: left_eye_inner, 2: left_eye, 3: left_eye_outer,
+    4: right_eye_inner, 5: right_eye, 6: right_eye_outer,
+    7: left_ear, 8: right_ear, 9: mouth_left, 10: mouth_right,
+    11: left_shoulder, 12: right_shoulder, 13: left_elbow, 14: right_elbow,
+    15: left_wrist, 16: right_wrist, 17: left_pinky, 18: right_pinky,
+    19: left_index, 20: right_index, 21: left_thumb, 22: right_thumb,
+    23: left_hip, 24: right_hip, 25: left_knee, 26: right_knee,
+    27: left_ankle, 28: right_ankle, 29: left_heel, 30: right_heel,
+    31: left_foot_index, 32: right_foot_index
     """
     
-    # Nombres de los keypoints de MediaPipe BlazePose (33 keypoints) - Topología oficial
+    # Nombres de los keypoints de MediaPipe BlazePose (33 keypoints) - Topología corregida
     KEYPOINT_NAMES = [
         'nose',                 # 0
-        'right_eye_inner',      # 1
-        'right_eye',            # 2
-        'right_eye_outer',      # 3
-        'left_eye_inner',       # 4
-        'left_eye',             # 5
-        'left_eye_outer',       # 6
-        'right_ear',            # 7
-        'left_ear',             # 8
-        'mouth_right',          # 9
-        'mouth_left',           # 10
-        'right_shoulder',       # 11
-        'left_shoulder',        # 12
-        'right_elbow',          # 13
-        'left_elbow',           # 14
-        'right_wrist',          # 15
-        'left_wrist',           # 16
-        'right_pinky_knuckle',  # 17
-        'left_pinky_knuckle',   # 18
-        'right_index_knuckle',  # 19
-        'left_index_knuckle',   # 20
-        'right_thumb_knuckle',  # 21
-        'left_thumb_knuckle',   # 22
-        'right_hip',            # 23
-        'left_hip',             # 24
-        'right_knee',           # 25
-        'left_knee',            # 26
-        'right_ankle',          # 27
-        'left_ankle',           # 28
-        'right_heel',           # 29
-        'left_heel',            # 30
-        'right_foot_index',     # 31
-        'left_foot_index'       # 32
+        'left_eye_inner',       # 1
+        'left_eye',             # 2
+        'left_eye_outer',       # 3
+        'right_eye_inner',      # 4
+        'right_eye',            # 5
+        'right_eye_outer',      # 6
+        'left_ear',             # 7
+        'right_ear',            # 8
+        'mouth_left',           # 9
+        'mouth_right',          # 10
+        'left_shoulder',        # 11
+        'right_shoulder',       # 12
+        'left_elbow',           # 13
+        'right_elbow',          # 14
+        'left_wrist',           # 15
+        'right_wrist',          # 16
+        'left_pinky',           # 17
+        'right_pinky',          # 18
+        'left_index',           # 19
+        'right_index',          # 20
+        'left_thumb',           # 21
+        'right_thumb',          # 22
+        'left_hip',             # 23
+        'right_hip',            # 24
+        'left_knee',            # 25
+        'right_knee',           # 26
+        'left_ankle',           # 27
+        'right_ankle',          # 28
+        'left_heel',            # 29
+        'right_heel',           # 30
+        'left_foot_index',      # 31
+        'right_foot_index'      # 32
     ]
     
-    # Conexiones del esqueleto para visualización - Topología oficial MediaPipe BlazePose
+    # Conexiones del esqueleto para visualización - Topología corregida
     POSE_CONNECTIONS = [
         # Face connections
-        (0, 1), (1, 2), (2, 3),    # right eye line
-        (0, 4), (4, 5), (5, 6),    # left eye line
+        (0, 1), (1, 2), (2, 3),    # left eye line
+        (0, 4), (4, 5), (5, 6),    # right eye line
         (0, 9), (0, 10), (9, 10),  # mouth connections
         (2, 7), (5, 8),            # eyes to ears
         
-        # Arms - Right arm
-        (11, 13), (13, 15),        # right shoulder -> elbow -> wrist
-        (15, 17), (15, 19), (15, 21),  # right wrist to hand points
-        
         # Arms - Left arm
-        (12, 14), (14, 16),        # left shoulder -> elbow -> wrist
-        (16, 18), (16, 20), (16, 22),  # left wrist to hand points
+        (11, 13), (13, 15),        # left shoulder -> elbow -> wrist
+        (15, 17), (15, 19), (15, 21),  # left wrist to hand points
+        
+        # Arms - Right arm
+        (12, 14), (14, 16),        # right shoulder -> elbow -> wrist
+        (16, 18), (16, 20), (16, 22),  # right wrist to hand points
         
         # Body core
         (11, 12),                  # shoulders
         (11, 23), (12, 24),        # shoulders to hips
         (23, 24),                  # hips
         
-        # Legs - Right leg
-        (23, 25), (25, 27),        # right hip -> knee -> ankle
-        (27, 29), (27, 31),        # right ankle to foot points
-        
         # Legs - Left leg
-        (24, 26), (26, 28),        # left hip -> knee -> ankle
-        (28, 30), (28, 32)         # left ankle to foot points
+        (23, 25), (25, 27),        # left hip -> knee -> ankle
+        (27, 29), (27, 31),        # left ankle to foot points
+        
+        # Legs - Right leg
+        (24, 26), (26, 28),        # right hip -> knee -> ankle
+        (28, 30), (28, 32)         # right ankle to foot points
     ]
     
     def __init__(self, 
@@ -321,13 +321,10 @@ class MediaPipePoseProcessor:
         # Reshape a [33, 3]
         keypoints = landmarks_flat.reshape(33, 3)
         
-        # Escalar coordenadas del modelo al tamaño original
-        scale_x = original_width / self.input_width
-        scale_y = original_height / self.input_height
-        
-        # Aplicar escalado a coordenadas x e y
-        keypoints[:, 0] *= scale_x  # x coordinates
-        keypoints[:, 1] *= scale_y  # y coordinates
+        # Las coordenadas del modelo MediaPipe están normalizadas [0, 1]
+        # Convertir a coordenadas de píxeles del frame original
+        keypoints[:, 0] *= original_width   # x coordinates
+        keypoints[:, 1] *= original_height  # y coordinates
         # keypoints[:, 2] ya es la confianza, no necesita escalado
         
         # Filtrar keypoints con confianza baja
@@ -452,14 +449,14 @@ class MediaPipePoseProcessor:
             'left_leg': (255, 0, 255),    # Magenta
         }
         
-        # Grupos de keypoints por parte del cuerpo (según topología oficial)
+        # Grupos de keypoints por parte del cuerpo (según topología corregida)
         body_parts = {
             'face': [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],     # Face and ears
-            'right_arm': [11, 13, 15, 17, 19, 21],           # Right arm and hand
-            'left_arm': [12, 14, 16, 18, 20, 22],            # Left arm and hand
+            'left_arm': [11, 13, 15, 17, 19, 21],            # Left arm and hand
+            'right_arm': [12, 14, 16, 18, 20, 22],           # Right arm and hand
             'torso': [11, 12, 23, 24],                       # Shoulders and hips
-            'right_leg': [23, 25, 27, 29, 31],               # Right leg and foot
-            'left_leg': [24, 26, 28, 30, 32]                 # Left leg and foot
+            'left_leg': [23, 25, 27, 29, 31],                # Left leg and foot
+            'right_leg': [24, 26, 28, 30, 32]                # Right leg and foot
         }
         
         # Dibujar landmarks
@@ -526,32 +523,32 @@ class MediaPipePoseProcessor:
             return np.degrees(angle)
         
         try:
-            # Ángulos de los brazos (corregidos según topología oficial)
-            if all(keypoints[[12, 14, 16], 2] > 0.1):  # left arm (shoulder, elbow, wrist)
+            # Ángulos de los brazos (corregidos según topología nueva)
+            if all(keypoints[[11, 13, 15], 2] > 0.1):  # left arm (shoulder, elbow, wrist)
                 angles['left_elbow'] = calculate_angle(
-                    keypoints[12][:2], keypoints[14][:2], keypoints[16][:2]
-                )
-            
-            if all(keypoints[[11, 13, 15], 2] > 0.1):  # right arm (shoulder, elbow, wrist)
-                angles['right_elbow'] = calculate_angle(
                     keypoints[11][:2], keypoints[13][:2], keypoints[15][:2]
                 )
             
-            # Ángulos de las piernas (corregidos según topología oficial)
-            if all(keypoints[[24, 26, 28], 2] > 0.1):  # left leg (hip, knee, ankle)
-                angles['left_knee'] = calculate_angle(
-                    keypoints[24][:2], keypoints[26][:2], keypoints[28][:2]
+            if all(keypoints[[12, 14, 16], 2] > 0.1):  # right arm (shoulder, elbow, wrist)
+                angles['right_elbow'] = calculate_angle(
+                    keypoints[12][:2], keypoints[14][:2], keypoints[16][:2]
                 )
             
-            if all(keypoints[[23, 25, 27], 2] > 0.1):  # right leg (hip, knee, ankle)
-                angles['right_knee'] = calculate_angle(
+            # Ángulos de las piernas (corregidos según topología nueva)
+            if all(keypoints[[23, 25, 27], 2] > 0.1):  # left leg (hip, knee, ankle)
+                angles['left_knee'] = calculate_angle(
                     keypoints[23][:2], keypoints[25][:2], keypoints[27][:2]
                 )
             
-            # Ángulo del torso (inclinación) - corregido según topología oficial
+            if all(keypoints[[24, 26, 28], 2] > 0.1):  # right leg (hip, knee, ankle)
+                angles['right_knee'] = calculate_angle(
+                    keypoints[24][:2], keypoints[26][:2], keypoints[28][:2]
+                )
+            
+            # Ángulo del torso (inclinación) - corregido según topología nueva
             if all(keypoints[[11, 12, 23, 24], 2] > 0.1):
-                shoulder_center = (keypoints[11][:2] + keypoints[12][:2]) / 2  # right + left shoulder
-                hip_center = (keypoints[23][:2] + keypoints[24][:2]) / 2      # right + left hip
+                shoulder_center = (keypoints[11][:2] + keypoints[12][:2]) / 2  # left + right shoulder
+                hip_center = (keypoints[23][:2] + keypoints[24][:2]) / 2      # left + right hip
                 
                 # Ángulo con respecto a la vertical
                 torso_vector = shoulder_center - hip_center
