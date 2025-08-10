@@ -36,7 +36,6 @@ try:
     # Usar mediapipe.solutions para compatibilidad con versiones anteriores
     mp_pose = mp.solutions.pose
     mp_drawing = mp.solutions.drawing_utils
-    mp_drawing_styles = mp.solutions.drawing_styles
     MP_AVAILABLE = True
     logger.info("✅ MediaPipe importado correctamente")
 except ImportError as e:
@@ -410,26 +409,15 @@ class MediaPipePoseProcessor2:
             # Convertir BGR a RGB para MediaPipe
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             
-            # Crear imagen MediaPipe
-            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
-            
-            # Procesar con MediaPipe
-            if self.running_mode == "IMAGE":
-                result = self.pose_landmarker.detect(mp_image)
-            elif self.running_mode == "VIDEO":
-                timestamp_ms = int(time.time() * 1000)
-                result = self.pose_landmarker.detect_for_video(mp_image, timestamp_ms)
-            else:
-                return None
+            # Procesar con MediaPipe usando solutions.pose
+            results = self.pose.process(rgb_frame)
             
             # Extraer world landmarks si están disponibles
-            if result.pose_world_landmarks and len(result.pose_world_landmarks) > 0:
-                world_landmarks = result.pose_world_landmarks[0]
-                
+            if results.pose_world_landmarks:
                 # Convertir a formato [33, 3]
                 world_keypoints = np.zeros((33, 3), dtype=np.float32)
                 
-                for i, landmark in enumerate(world_landmarks):
+                for i, landmark in enumerate(results.pose_world_landmarks.landmark):
                     world_keypoints[i] = [landmark.x, landmark.y, landmark.z]
                 
                 return world_keypoints
@@ -461,7 +449,7 @@ class MediaPipePoseProcessor2:
         return (f"MediaPipePoseProcessor2(MediaPipe, "
                 f"detection_conf={self.min_detection_confidence}, "
                 f"tracking_conf={self.min_tracking_confidence}, "
-                f"mode={self.running_mode})")
+                f"complexity={self.model_complexity})")
     
     def __repr__(self) -> str:
         return self.__str__()
@@ -481,11 +469,10 @@ if __name__ == "__main__":
     # Crear procesador con MediaPipe
     try:
         processor = MediaPipePoseProcessor2(
-            model_path = "../models/pose_landmarker_lite_fp16.engines",  # Ruta al modelo
             min_detection_confidence=0.5,
             min_tracking_confidence=0.5,
-            num_poses=1,
-            running_mode="IMAGE"
+            static_image_mode=False,
+            model_complexity=1
         )
     except Exception as e:
         print(f"❌ Error inicializando procesador: {e}")
