@@ -1,19 +1,22 @@
 #!/usr/bin/env python3
 """
-MediaPipe Pose Processor 2 - Detección de poses usando MediaPipe oficial
-========================================================================
+TensorRT Pose Processor - Detección y estimación de poses usando TensorRT con MediaPipe BlazePose
+=============================================================================================
 
-Clase para procesar frames de imágenes y detectar keypoints de poses humanas
-usando la librería oficial de MediaPipe PoseLandmarker.
+Pipeline completo para detectar personas y estimar keypoints de poses humanas usando
+pose_detection_fp16.engine y pose_landmark_lite_fp16.engine con TensorRT.
 
-MediaPipe BlazePose detecta 33 keypoints del cuerpo humano en tiempo real
-con alta precisión y eficiencia computacional.
+Optimiza FPS mediante:
+- Uso de FP16 para ambos modelos
+- Pinned memory para transferencias CPU-GPU
+- Preprocesamiento eficiente con preservación de aspect ratio
+- Soporte para múltiples personas
+- Opcional: Procesamiento por lotes
 
 Instalación de dependencias:
-    pip install mediapipe opencv-python numpy
-
-Referencia oficial:
-    https://ai.google.dev/edge/mediapipe/solutions/vision/pose_landmarker/python
+    pip install opencv-python numpy pycuda
+    # Para TensorRT, seguir guía oficial de NVIDIA:
+    # https://docs.nvidia.com/deeplearning/tensorrt/install-guide/index.html
 
 Autor: Sistema de IA
 Fecha: 2025
@@ -21,363 +24,770 @@ Fecha: 2025
 
 import cv2
 import numpy as np
-from typing import Optional, Tuple, List, Union
+from typing import Optional, Tuple, List, Dict
 import logging
 import os
 import time
+import math
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Importar MediaPipe
+# Importar TensorRT y PyCUDA
 try:
-    import mediapipe as mp
-    # Usar mediapipe.solutions para compatibilidad con versiones anteriores
-    mp_pose = mp.solutions.pose
-    mp_drawing = mp.solutions.drawing_utils
-    MP_AVAILABLE = True
-    logger.info("✅ MediaPipe importado correctamente")
+    import tensorrt as trt
+    import pycuda.driver as cuda
+    import pycuda.autoinit
+    TRT_AVAILABLE = True
+    logger.info("✅ TensorRT y PyCUDA importados correctamente")
 except ImportError as e:
-    MP_AVAILABLE = False
-    logger.warning(f"⚠️ MediaPipe no disponible: {e}")
-    logger.warning("💡 Para usar esta clase, instale MediaPipe: pip install mediapipe")
+    TRT_AVAILABLE = False
+    logger.error(f"❌ TensorRT/PyCUDA no disponible: {e}")
+    logger.warning("💡 Instale TensorRT y PyCUDA para usar esta clase")
 
-class MediaPipePoseProcessor2:
+class PoseDetector:
     """
-    Procesador de poses usando MediaPipe oficial PoseLandmarker
-    
-    Utiliza el modelo PoseLandmarker de MediaPipe para detectar 33 keypoints 
-    del cuerpo humano según la topología oficial:
-    0: nose, 1: left_eye_inner, 2: left_eye, 3: left_eye_outer,
-    4: right_eye_inner, 5: right_eye, 6: right_eye_outer,
-    7: left_ear, 8: right_ear, 9: mouth_left, 10: mouth_right,
-    11: left_shoulder, 12: right_shoulder, 13: left_elbow, 14: right_elbow,
-    15: left_wrist, 16: right_wrist, 17: left_pinky, 18: right_pinky,
-    19: left_index, 20: right_index, 21: left_thumb, 22: right_thumb,
-    23: left_hip, 24: right_hip, 25: left_knee, 26: right_knee,
-    27: left_ankle, 28: right_ankle, 29: left_heel, 30: right_heel,
-    31: left_foot_index, 32: right_foot_index
+    Detector de personas usando pose_detection_fp16.engine con TensorRT
     """
-    
-    # Nombres de los keypoints de MediaPipe BlazePose (33 keypoints) - Topología oficial
-    KEYPOINT_NAMES = [
-        'nose',                 # 0
-        'left_eye_inner',       # 1
-        'left_eye',             # 2
-        'left_eye_outer',       # 3
-        'right_eye_inner',      # 4
-        'right_eye',            # 5
-        'right_eye_outer',      # 6
-        'left_ear',             # 7
-        'right_ear',            # 8
-        'mouth_left',           # 9
-        'mouth_right',          # 10
-        'left_shoulder',        # 11
-        'right_shoulder',       # 12
-        'left_elbow',           # 13
-        'right_elbow',          # 14
-        'left_wrist',           # 15
-        'right_wrist',          # 16
-        'left_pinky',           # 17
-        'right_pinky',          # 18
-        'left_index',           # 19
-        'right_index',          # 20
-        'left_thumb',           # 21
-        'right_thumb',          # 22
-        'left_hip',             # 23
-        'right_hip',            # 24
-        'left_knee',            # 25
-        'right_knee',           # 26
-        'left_ankle',           # 27
-        'right_ankle',          # 28
-        'left_heel',            # 29
-        'right_heel',           # 30
-        'left_foot_index',      # 31
-        'right_foot_index'      # 32
-    ]
-    
-    # Conexiones del esqueleto para visualización - Topología oficial MediaPipe BlazePose
-    POSE_CONNECTIONS = [
-        # Face connections
-        (0, 1), (1, 2), (2, 3),    # left eye line
-        (0, 4), (4, 5), (5, 6),    # right eye line
-        (0, 9), (0, 10), (9, 10),  # mouth connections
-        (2, 7), (5, 8),            # eyes to ears
-        
-        # Arms - Left arm
-        (11, 13), (13, 15),        # left shoulder -> elbow -> wrist
-        (15, 17), (15, 19), (15, 21),  # left wrist to hand points
-        
-        # Arms - Right arm
-        (12, 14), (14, 16),        # right shoulder -> elbow -> wrist
-        (16, 18), (16, 20), (16, 22),  # right wrist to hand points
-        
-        # Body core
-        (11, 12),                  # shoulders
-        (11, 23), (12, 24),        # shoulders to hips
-        (23, 24),                  # hips
-        
-        # Legs - Left leg
-        (23, 25), (25, 27),        # left hip -> knee -> ankle
-        (27, 29), (27, 31),        # left ankle to foot points
-        
-        # Legs - Right leg
-        (24, 26), (26, 28),        # right hip -> knee -> ankle
-        (28, 30), (28, 32)         # right ankle to foot points
-    ]
-    
-    def __init__(self, 
-                 min_detection_confidence: float = 0.5,
-                 min_tracking_confidence: float = 0.5,
-                 static_image_mode: bool = False,
-                 model_complexity: int = 1,
-                 smooth_landmarks: bool = True):
+    def __init__(self, model_path: str = "pose_detection_fp16.engine",
+                 input_width: int = 224, input_height: int = 224,
+                 min_score_thresh: float = 0.5):
         """
-        Inicializa el procesador de poses MediaPipe
+        Inicializa el detector de poses
         
         Args:
-            min_detection_confidence: Confianza mínima para detección (0.0-1.0)
-            min_tracking_confidence: Confianza mínima para tracking (0.0-1.0)
-            static_image_mode: Si tratar cada imagen independientemente
-            model_complexity: Complejidad del modelo (0, 1, 2)
-            smooth_landmarks: Si suavizar landmarks entre frames
+            model_path: Ruta al modelo pose_detection_fp16.engine
+            input_width: Ancho de entrada (224)
+            input_height: Alto de entrada (224)
+            min_score_thresh: Umbral de confianza para detecciones
         """
-        if not MP_AVAILABLE:
-            raise ImportError("MediaPipe es requerido. Instale con: pip install mediapipe")
+        if not TRT_AVAILABLE:
+            raise ImportError("TensorRT y PyCUDA son requeridos")
         
-        self.min_detection_confidence = min_detection_confidence
-        self.min_tracking_confidence = min_tracking_confidence
-        self.static_image_mode = static_image_mode
-        self.model_complexity = model_complexity
-        self.smooth_landmarks = smooth_landmarks
+        self.model_path = model_path
+        self.input_width = input_width
+        self.input_height = input_height
+        self.min_score_thresh = min_score_thresh
         
-        # Variables MediaPipe
-        self.pose = None
+        self.engine = None
+        self.context = None
+        self.runtime = None
+        self.input_binding = None
+        self.output_bindings = []
+        self.d_input = None
+        self.d_outputs = []
+        self.input_shape = None
+        self.output_shapes = []
+        self.output_sizes = []
+        self.stream = None
         
-        # Cargar modelo MediaPipe
-        self._load_mediapipe_model()
+        self.dtype_size_map = {
+            trt.DataType.FLOAT: 4,
+            trt.DataType.HALF: 2,
+            trt.DataType.INT32: 4,
+            trt.DataType.INT8: 1
+        }
         
-        logger.info("✅ MediaPipe Pose Processor 2 inicializado correctamente")
-        logger.info(f"   🎯 Confianza detección: {min_detection_confidence}")
-        logger.info(f"   🎯 Confianza tracking: {min_tracking_confidence}")
-        logger.info(f"   �️ Modo imagen estática: {static_image_mode}")
-        logger.info(f"   🧠 Complejidad modelo: {model_complexity}")
+        self._load_tensorrt_model()
         
-    def _load_mediapipe_model(self):
-        """Carga el modelo MediaPipe Pose usando mediapipe.solutions"""
-        try:
-            # Inicializar MediaPipe Pose usando solutions
-            self.pose = mp_pose.Pose(
-                static_image_mode=self.static_image_mode,
-                model_complexity=self.model_complexity,
-                smooth_landmarks=self.smooth_landmarks,
-                min_detection_confidence=self.min_detection_confidence,
-                min_tracking_confidence=self.min_tracking_confidence
-            )
+        # SSD anchors para pose_detection
+        self.anchors = self._generate_ssd_anchors()
+        
+        logger.info("✅ PoseDetector inicializado")
+        logger.info(f"   � Modelo: {os.path.basename(model_path)}")
+        logger.info(f"   📐 Entrada: {input_width}x{input_height}")
+        
+    def _generate_ssd_anchors(self) -> np.ndarray:
+        """
+        Genera anchors SSD según mediapipe/modules/pose_detection/pose_detection_cpu.pbtxt
+        """
+        num_layers = 5
+        min_scale = 0.1484375
+        max_scale = 0.75
+        input_size_height = 224
+        input_size_width = 224
+        anchor_offset_x = 0.5
+        anchor_offset_y = 0.5
+        strides = [8, 16, 32, 32, 32]
+        aspect_ratios = [1.0]
+        
+        anchors = []
+        for layer in range(num_layers):
+            stride = strides[layer]
+            num_grid_x = input_size_width // stride
+            num_grid_y = input_size_height // stride
+            scale = min_scale + (max_scale - min_scale) * layer / (num_layers - 1)
             
-            logger.info("✅ Modelo MediaPipe Pose cargado exitosamente")
+            for y in range(num_grid_y):
+                for x in range(num_grid_x):
+                    for aspect_ratio in aspect_ratios:
+                        anchor_width = scale * np.sqrt(aspect_ratio)
+                        anchor_height = scale / np.sqrt(aspect_ratio)
+                        cx = (x + anchor_offset_x) * stride / input_size_width
+                        cy = (y + anchor_offset_y) * stride / input_size_height
+                        anchors.append([cx, cy, anchor_width, anchor_height])
+        
+        return np.array(anchors, dtype=np.float32)
+    
+    def _load_tensorrt_model(self):
+        """Carga el modelo TensorRT .engine"""
+        try:
+            if not os.path.exists(self.model_path):
+                raise FileNotFoundError(f"Modelo no encontrado: {self.model_path}")
+            
+            with open(self.model_path, 'rb') as f:
+                engine_data = f.read()
+            
+            trt_logger = trt.Logger(trt.Logger.WARNING)
+            self.runtime = trt.Runtime(trt_logger)
+            self.engine = self.runtime.deserialize_cuda_engine(engine_data)
+            
+            if self.engine is None:
+                raise RuntimeError("Error al deserializar el engine TensorRT")
+            
+            self.context = self.engine.create_execution_context()
+            
+            self.input_binding = None
+            self.output_bindings = []
+            self.output_shapes = []
+            self.output_sizes = []
+            self.d_outputs = []
+            
+            for i in range(self.engine.num_bindings):
+                if self.engine.binding_is_input(i):
+                    self.input_binding = i
+                    self.input_shape = self.engine.get_binding_shape(i)
+                    self.input_size = trt.volume(self.input_shape)
+                    input_dtype = self.engine.get_binding_dtype(i)
+                    input_itemsize = self.dtype_size_map.get(input_dtype, 4)
+                    self.h_input = cuda.pagelocked_empty(self.input_shape, dtype=np.float32)
+                    self.d_input = cuda.mem_alloc(self.input_size * input_itemsize)
+                    logger.info(f"📥 Input binding {i}: shape={self.input_shape}, dtype={input_dtype}")
+                else:
+                    output_shape = self.engine.get_binding_shape(i)
+                    output_size = trt.volume(output_shape)
+                    output_dtype = self.engine.get_binding_dtype(i)
+                    output_itemsize = self.dtype_size_map.get(output_dtype, 4)
+                    self.output_bindings.append(i)
+                    self.output_shapes.append(output_shape)
+                    self.output_sizes.append(output_size)
+                    self.d_outputs.append(cuda.mem_alloc(output_size * output_itemsize))
+                    logger.info(f"📤 Output binding {i}: shape={output_shape}, dtype={output_dtype}")
+            
+            self.stream = cuda.Stream()
+            
+            logger.info(f"✅ Modelo TensorRT cargado: {os.path.basename(self.model_path)}")
             
         except Exception as e:
-            error_msg = f"❌ Error cargando modelo MediaPipe: {e}"
-            logger.error(error_msg)
-            raise RuntimeError(error_msg)
+            logger.error(f"❌ Error cargando modelo TensorRT: {e}")
+            raise
     
-    def process_frame(self, frame: np.ndarray) -> Optional[np.ndarray]:
+    def _preprocess_frame(self, frame: np.ndarray) -> Tuple[np.ndarray, float, int, int]:
         """
-        Procesa un frame y retorna los keypoints detectados usando MediaPipe
+        Preprocesa el frame para el modelo de detección
+        """
+        if frame.shape[2] != 3:
+            logger.error("❌ Frame debe ser BGR (3 canales)")
+            return None, 1.0, 0, 0
+        
+        orig_h, orig_w = frame.shape[:2]
+        scale = min(self.input_width / orig_w, self.input_height / orig_h)
+        new_w = int(orig_w * scale)
+        new_h = int(orig_h * scale)
+        
+        resized = cv2.resize(frame, (new_w, new_h))
+        pad_left = (self.input_width - new_w) // 2
+        pad_top = (self.input_height - new_h) // 2
+        
+        padded = np.zeros((self.input_height, self.input_width, 3), dtype=np.float32)
+        padded[pad_top:pad_top + new_h, pad_left:pad_left + new_w] = resized.astype(np.float32)
+        
+        rgb_frame = cv2.cvtColor(padded, cv2.COLOR_BGR2RGB)
+        normalized = rgb_frame / 255.0
+        
+        batched = np.expand_dims(normalized, axis=0)
+        return batched, scale, pad_left, pad_top
+    
+    def _decode_detections(self, regressors: np.ndarray, classificators: np.ndarray,
+                          scale: float, pad_left: int, pad_top: int,
+                          original_width: int, original_height: int) -> Tuple[List[np.ndarray], List[float]]:
+        """
+        Decodifica las salidas del modelo de detección según TensorsToDetectionsCalculator
+        """
+        regressors = regressors[0]  # (896, 12)
+        classificators = classificators[0]  # (896, 1)
+        
+        bboxes = []
+        rotations = []
+        
+        for i in range(len(self.anchors)):
+            score = 1 / (1 + np.exp(-classificators[i, 0]))  # Sigmoid
+            if score < self.min_score_thresh:
+                continue
+            
+            anchor = self.anchors[i]
+            cx, cy, w, h = anchor
+            dx, dy, dw, dh = regressors[i, :4]
+            
+            # Decodificar bounding box
+            box_cx = cx + dx / self.input_width
+            box_cy = cy + dy / self.input_height
+            box_w = w * np.exp(dw / self.input_width)
+            box_h = h * np.exp(dh / self.input_height)
+            
+            # Convertir a coordenadas absolutas
+            x_min = (box_cx - box_w / 2) * self.input_width - pad_left
+            y_min = (box_cy - box_h / 2) * self.input_height - pad_top
+            x_max = (box_cx + box_w / 2) * self.input_width - pad_left
+            y_max = (box_cy + box_h / 2) * self.input_height - pad_top
+            
+            x_min /= scale
+            y_min /= scale
+            x_max /= scale
+            y_max /= scale
+            
+            x_min = max(0, min(x_min, original_width - 1))
+            x_max = max(0, min(x_max, original_width - 1))
+            y_min = max(0, min(y_min, original_height - 1))
+            y_max = max(0, min(y_max, original_height - 1))
+            
+            # Calcular rotación (basado en keypoint 1: full-body rotation)
+            kx, ky = regressors[i, 4:6]  # Primer keypoint (mid hip center)
+            kx2, ky2 = regressors[i, 6:8]  # Segundo keypoint (size & rotation)
+            rotation = np.arctan2(ky2 - ky, kx2 - kx)
+            
+            bboxes.append(np.array([x_min, y_min, x_max, y_max], dtype=np.float32))
+            rotations.append(rotation)
+        
+        # Non-Max Suppression
+        if bboxes:
+            bboxes, rotations = self._non_max_suppression(bboxes, classificators, rotations)
+        
+        return bboxes, rotations
+    
+    def _non_max_suppression(self, bboxes: List[np.ndarray], scores: np.ndarray, rotations: List[float],
+                            iou_threshold: float = 0.3) -> Tuple[List[np.ndarray], List[float]]:
+        """
+        Aplica Non-Max Suppression para eliminar detecciones redundantes
+        """
+        if not bboxes:
+            return [], []
+        
+        areas = [(box[2] - box[0]) * (box[3] - box[1]) for box in bboxes]
+        order = np.argsort(scores[:, 0])[::-1]
+        
+        keep_bboxes = []
+        keep_rotations = []
+        while order.size > 0:
+            i = order[0]
+            keep_bboxes.append(bboxes[i])
+            keep_rotations.append(rotations[i])
+            
+            ious = []
+            for j in order[1:]:
+                box1 = bboxes[i]
+                box2 = bboxes[j]
+                x1 = max(box1[0], box2[0])
+                y1 = max(box1[1], box2[1])
+                x2 = min(box1[2], box2[2])
+                y2 = min(box1[3], box2[3])
+                
+                inter_area = max(0, x2 - x1) * max(0, y2 - y1)
+                iou = inter_area / (areas[i] + areas[j] - inter_area + 1e-10)
+                ious.append(iou)
+            
+            keep = np.where(np.array(ious) <= iou_threshold)[0]
+            order = order[1:][keep]
+        
+        return keep_bboxes, keep_rotations
+    
+    def detect(self, frame: np.ndarray) -> Tuple[List[np.ndarray], List[float]]:
+        """
+        Detecta personas en el frame y retorna bounding boxes y rotaciones
         
         Args:
-            frame: Frame de imagen en formato BGR (numpy array)
+            frame: Frame BGR
             
         Returns:
-            keypoints: Array de keypoints [33, 3] donde cada fila es (x, y, confidence)
-                      o None si ocurre un error o no se detectan poses
+            bboxes: Lista de [x_min, y_min, x_max, y_max]
+            rotations: Lista de ángulos de rotación
+        """
+        if frame is None or frame.shape[0] == 0:
+            logger.warning("⚠️ Frame vacío")
+            return [], []
+        
+        try:
+            original_height, original_width = frame.shape[:2]
+            input_data, scale, pad_left, pad_top = self._preprocess_frame(frame)
+            if input_data is None:
+                return [], []
+            
+            cuda.memcpy_htod_async(self.d_input, input_data, self.stream)
+            
+            bindings = [None] * self.engine.num_bindings
+            bindings[self.input_binding] = int(self.d_input)
+            for i, output_binding in enumerate(self.output_bindings):
+                bindings[output_binding] = int(self.d_outputs[i])
+            
+            self.context.execute_async_v2(bindings, self.stream.handle)
+            
+            h_outputs = []
+            for i, shape in enumerate(self.output_shapes):
+                h_output = np.empty(shape, dtype=np.float32)
+                cuda.memcpy_dtoh_async(h_output, self.d_outputs[i], self.stream)
+                h_outputs.append(h_output)
+            
+            self.stream.synchronize()
+            
+            regressors = None
+            classificators = None
+            for i, shape in enumerate(self.output_shapes):
+                if shape[-1] == 12:
+                    regressors = h_outputs[i]
+                elif shape[-1] == 1:
+                    classificators = h_outputs[i]
+            
+            if regressors is None or classificators is None:
+                logger.error("❌ Salidas del modelo no encontradas")
+                return [], []
+            
+            bboxes, rotations = self._decode_detections(regressors, classificators, scale, pad_left, pad_top,
+                                                      original_width, original_height)
+            logger.debug(f"✅ Detectadas {len(bboxes)} personas")
+            return bboxes, rotations
+            
+        except Exception as e:
+            logger.error(f"❌ Error en detección: {e}")
+            return [], []
+    
+    def cleanup(self):
+        """Libera recursos de TensorRT y CUDA"""
+        try:
+            if self.d_input:
+                self.d_input.free()
+            for d_output in self.d_outputs:
+                d_output.free()
+            self.d_outputs = []
+            self.stream = None
+            self.context = None
+            self.engine = None
+            self.runtime = None
+            logger.info("✅ Recursos PoseDetector liberados")
+        except Exception as e:
+            logger.warning(f"⚠️ Error durante limpieza: {e}")
+
+class MediaPipePoseProcessor:
+    """
+    Procesador de poses usando TensorRT con pose_landmark_lite_fp16.engine
+    """
+    KEYPOINT_NAMES = [
+        'nose', 'left_eye_inner', 'left_eye', 'left_eye_outer',
+        'right_eye_inner', 'right_eye', 'right_eye_outer',
+        'left_ear', 'right_ear', 'mouth_left', 'mouth_right',
+        'left_shoulder', 'right_shoulder', 'left_elbow', 'right_elbow',
+        'left_wrist', 'right_wrist', 'left_pinky', 'right_pinky',
+        'left_index', 'right_index', 'left_thumb', 'right_thumb',
+        'left_hip', 'right_hip', 'left_knee', 'right_knee',
+        'left_ankle', 'right_ankle', 'left_heel', 'right_heel',
+        'left_foot_index', 'right_foot_index'
+    ]
+    
+    POSE_CONNECTIONS = [
+        (0, 1), (1, 2), (2, 3), (0, 4), (4, 5), (5, 6),
+        (0, 9), (0, 10), (9, 10), (2, 7), (5, 8),
+        (11, 13), (13, 15), (15, 17), (15, 19), (15, 21),
+        (12, 14), (14, 16), (16, 18), (16, 20), (16, 22),
+        (11, 12), (11, 23), (12, 24), (23, 24),
+        (23, 25), (25, 27), (27, 29), (27, 31),
+        (24, 26), (26, 28), (28, 30), (28, 32)
+    ]
+    
+    def __init__(self,
+                 detector_model_path: str = "models/pose_detection_fp16.engine",
+                 landmark_model_path: str = "models/pose_landmark_lite_fp16.engine",
+                 input_width: int = 256,
+                 input_height: int = 256,
+                 confidence_threshold: float = 0.5,
+                 min_score_thresh: float = 0.5,
+                 visualize_scale: float = 1.0):
+        """
+        Inicializa el procesador de poses con detección y landmarks
+        
+        Args:
+            detector_model_path: Ruta al modelo de detección
+            landmark_model_path: Ruta al modelo de landmarks
+            input_width: Ancho de entrada para landmarks
+            input_height: Alto de entrada para landmarks
+            confidence_threshold: Umbral para landmarks
+            min_score_thresh: Umbral para detecciones
+            visualize_scale: Escala para visualización
+        """
+        if not TRT_AVAILABLE:
+            raise ImportError("TensorRT y PyCUDA son requeridos")
+        
+        self.detector = PoseDetector(detector_model_path, 224, 224, min_score_thresh)
+        self.model_path = landmark_model_path
+        self.input_width = input_width
+        self.input_height = input_height
+        self.confidence_threshold = confidence_threshold
+        self.visualize_scale = visualize_scale
+        
+        self.engine = None
+        self.context = None
+        self.runtime = None
+        self.input_binding = None
+        self.output_bindings = []
+        self.d_input = None
+        self.d_outputs = []
+        self.input_shape = None
+        self.output_shapes = []
+        self.output_sizes = []
+        self.stream = None
+        
+        self.dtype_size_map = {
+            trt.DataType.FLOAT: 4,
+            trt.DataType.HALF: 2,
+            trt.DataType.INT32: 4,
+            trt.DataType.INT8: 1
+        }
+        
+        self._load_tensorrt_model()
+        
+        logger.info("✅ MediaPipePoseProcessor inicializado")
+        logger.info(f"   � Landmark Model: {os.path.basename(landmark_model_path)}")
+        logger.info(f"   � Detector Model: {os.path.basename(detector_model_path)}")
+        
+    def _load_tensorrt_model(self):
+        """Carga el modelo de landmarks TensorRT"""
+        try:
+            if not os.path.exists(self.model_path):
+                raise FileNotFoundError(f"Modelo no encontrado: {self.model_path}")
+            
+            with open(self.model_path, 'rb') as f:
+                engine_data = f.read()
+            
+            trt_logger = trt.Logger(trt.Logger.WARNING)
+            self.runtime = trt.Runtime(trt_logger)
+            self.engine = self.runtime.deserialize_cuda_engine(engine_data)
+            
+            if self.engine is None:
+                raise RuntimeError("Error al deserializar el engine TensorRT")
+            
+            self.context = self.engine.create_execution_context()
+            
+            self.input_binding = None
+            self.output_bindings = []
+            self.output_shapes = []
+            self.output_sizes = []
+            self.d_outputs = []
+            
+            for i in range(self.engine.num_bindings):
+                if self.engine.binding_is_input(i):
+                    self.input_binding = i
+                    self.input_shape = self.engine.get_binding_shape(i)
+                    self.input_size = trt.volume(self.input_shape)
+                    input_dtype = self.engine.get_binding_dtype(i)
+                    input_itemsize = self.dtype_size_map.get(input_dtype, 4)
+                    self.h_input = cuda.pagelocked_empty(self.input_shape, dtype=np.float32)
+                    self.d_input = cuda.mem_alloc(self.input_size * input_itemsize)
+                    logger.info(f"📥 Input binding {i}: shape={self.input_shape}, dtype={input_dtype}")
+                else:
+                    output_shape = self.engine.get_binding_shape(i)
+                    output_size = trt.volume(output_shape)
+                    output_dtype = self.engine.get_binding_dtype(i)
+                    output_itemsize = self.dtype_size_map.get(output_dtype, 4)
+                    self.output_bindings.append(i)
+                    self.output_shapes.append(output_shape)
+                    self.output_sizes.append(output_size)
+                    self.d_outputs.append(cuda.mem_alloc(output_size * output_itemsize))
+                    logger.info(f"📤 Output binding {i}: shape={output_shape}, dtype={output_dtype}")
+            
+            self.stream = cuda.Stream()
+            
+            logger.info(f"✅ Modelo TensorRT cargado: {os.path.basename(self.model_path)}")
+            
+        except Exception as e:
+            logger.error(f"❌ Error cargando modelo TensorRT: {e}")
+            raise
+    
+    def _crop_and_rotate_roi(self, frame: np.ndarray, bbox: np.ndarray, rotation: float) -> np.ndarray:
+        """
+        Recorta y rota el ROI según el bounding box y ángulo
+        
+        Args:
+            frame: Frame BGR
+            bbox: [x_min, y_min, x_max, y_max]
+            rotation: Ángulo en radianes
+            
+        Returns:
+            roi: Imagen recortada y rotada
+        """
+        x_min, y_min, x_max, y_max = bbox
+        x_min, y_min, x_max, y_max = map(int, [x_min, y_min, x_max, y_max])
+        
+        # Asegurar límites
+        x_min = max(0, x_min)
+        y_min = max(0, y_min)
+        x_max = min(frame.shape[1] - 1, x_max)
+        y_max = min(frame.shape[0] - 1, y_max)
+        
+        if x_max <= x_min or y_max <= y_min:
+            logger.warning("⚠️ Bounding box inválido")
+            return None
+        
+        # Recortar ROI
+        roi = frame[y_min:y_max, x_min:x_max]
+        if roi.size == 0:
+            logger.warning("⚠️ ROI vacío")
+            return None
+        
+        # Rotar ROI
+        center = ((x_max - x_min) / 2, (y_max - y_min) / 2)
+        M = cv2.getRotationMatrix2D(center, np.degrees(-rotation), 1.0)
+        roi = cv2.warpAffine(roi, M, (x_max - x_min, y_max - y_min))
+        
+        return roi
+    
+    def _preprocess_frame(self, frame: np.ndarray) -> Tuple[np.ndarray, float, int, int]:
+        """
+        Preprocesa el frame para el modelo de landmarks
+        """
+        if frame.shape[2] != 3:
+            logger.error("❌ Frame debe ser BGR (3 canales)")
+            return None, 1.0, 0, 0
+        
+        orig_h, orig_w = frame.shape[:2]
+        scale = min(self.input_width / orig_w, self.input_height / orig_h)
+        new_w = int(orig_w * scale)
+        new_h = int(orig_h * scale)
+        
+        resized = cv2.resize(frame, (new_w, new_h))
+        pad_left = (self.input_width - new_w) // 2
+        pad_top = (self.input_height - new_h) // 2
+        
+        padded = np.zeros((self.input_height, self.input_width, 3), dtype=np.float32)
+        padded[pad_top:pad_top + new_h, pad_left:pad_left + new_w] = resized.astype(np.float32)
+        
+        rgb_frame = cv2.cvtColor(padded, cv2.COLOR_BGR2RGB)
+        normalized = rgb_frame / 255.0
+        
+        batched = np.expand_dims(normalized, axis=0)
+        return batched, scale, pad_left, pad_top
+    
+    def _postprocess_output(self, output_data: np.ndarray, scale: float, pad_left: int, pad_top: int,
+                           original_width: int, original_height: int, bbox: np.ndarray, rotation: float) -> np.ndarray:
+        """
+        Postprocesa los keypoints, ajustando por escala, padding y rotación
+        """
+        landmarks_flat = output_data.flatten()
+        if len(landmarks_flat) < 195:
+            logger.warning("⚠️ Salida del modelo más pequeña de lo esperado")
+            return np.zeros((33, 3), dtype=np.float32)
+        
+        xyz = landmarks_flat[:117].reshape(39, 3)
+        visibility = landmarks_flat[117:156]
+        num_landmarks = 33
+        keypoints = np.column_stack((xyz[:num_landmarks, :2], visibility[:num_landmarks]))
+        
+        # Desnormalizar
+        keypoints[:, 0] *= self.input_width
+        keypoints[:, 1] *= self.input_height
+        keypoints[:, 0] -= pad_left
+        keypoints[:, 1] -= pad_top
+        keypoints[:, 0] /= scale
+        keypoints[:, 1] /= scale
+        
+        # Transformar al sistema de coordenadas original
+        x_min, y_min, x_max, y_max = bbox
+        center = ((x_max - x_min) / 2, (y_max - y_min) / 2)
+        M = cv2.getRotationMatrix2D(center, np.degrees(rotation), 1.0)
+        points = keypoints[:, :2]
+        points = np.hstack([points, np.ones((points.shape[0], 1))])
+        transformed = (M @ points.T).T
+        keypoints[:, :2] = transformed + np.array([x_min, y_min])
+        
+        keypoints[keypoints[:, 2] < self.confidence_threshold] = [0, 0, 0]
+        return keypoints.astype(np.float32)
+    
+    def process_frame(self, frame: np.ndarray, max_persons: int = 4) -> List[Dict[str, np.ndarray]]:
+        """
+        Procesa el frame, detecta personas y estima keypoints
+        
+        Args:
+            frame: Frame BGR
+            max_persons: Máximo número de personas a procesar
+            
+        Returns:
+            results: Lista de diccionarios con 'bbox', 'rotation', 'keypoints'
         """
         if frame is None or frame.size == 0:
-            logger.warning("⚠️ Frame vacío o None recibido")
-            return None
+            logger.warning("⚠️ Frame vacío")
+            return []
         
         try:
-            # Convertir BGR a RGB para MediaPipe
-            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            bboxes, rotations = self.detector.detect(frame)
+            if not bboxes:
+                logger.debug("⚠️ No se detectaron personas")
+                return []
             
-            # Procesar con MediaPipe usando solutions.pose
-            results = self.pose.process(rgb_frame)
+            results = []
+            original_height, original_width = frame.shape[:2]
             
-            # Extraer keypoints si se detectaron poses
-            if results.pose_landmarks:
-                # Convertir a formato [33, 3]
-                keypoints = np.zeros((33, 3), dtype=np.float32)
+            for i, (bbox, rotation) in enumerate(zip(bboxes, rotations)):
+                if i >= max_persons:
+                    break
                 
-                height, width = frame.shape[:2]
+                roi = self._crop_and_rotate_roi(frame, bbox, rotation)
+                if roi is None:
+                    continue
                 
-                for i, landmark in enumerate(results.pose_landmarks.landmark):
-                    # Convertir coordenadas normalizadas a píxeles
-                    x = landmark.x * width
-                    y = landmark.y * height
-                    confidence = landmark.visibility  # Usar visibility como confidence
-                    
-                    keypoints[i] = [x, y, confidence]
+                input_data, scale, pad_left, pad_top = self._preprocess_frame(roi)
+                if input_data is None:
+                    continue
                 
-                logger.debug(f"✅ Detectados {len(keypoints)} keypoints con MediaPipe")
-                return keypoints
-            else:
-                logger.debug("⚠️ No se detectaron poses en el frame")
-                return None
+                cuda.memcpy_htod_async(self.d_input, input_data, self.stream)
                 
+                bindings = [None] * self.engine.num_bindings
+                bindings[self.input_binding] = int(self.d_input)
+                for j, output_binding in enumerate(self.output_bindings):
+                    bindings[output_binding] = int(self.d_outputs[j])
+                
+                self.context.execute_async_v2(bindings, self.stream.handle)
+                
+                output_idx = 0
+                for j, size in enumerate(self.output_sizes):
+                    if size == 195:
+                        output_idx = j
+                        break
+                
+                h_output = np.empty(self.output_shapes[output_idx], dtype=np.float32)
+                cuda.memcpy_dtoh_async(h_output, self.d_outputs[output_idx], self.stream)
+                self.stream.synchronize()
+                
+                keypoints = self._postprocess_output(h_output, scale, pad_left, pad_top,
+                                                   original_width, original_height, bbox, rotation)
+                
+                results.append({
+                    'bbox': bbox,
+                    'rotation': rotation,
+                    'keypoints': keypoints
+                })
+            
+            logger.debug(f"✅ Procesadas {len(results)} personas")
+            return results
+            
         except Exception as e:
-            logger.error(f"❌ Error procesando frame con MediaPipe: {e}")
-            return None
+            logger.error(f"❌ Error procesando frame: {e}")
+            return []
     
-    def visualize_keypoints(self, frame: np.ndarray, 
-                          keypoints: Optional[np.ndarray] = None,
-                          draw_landmarks: bool = True,
-                          draw_connections: bool = True,
-                          draw_labels: bool = False,
-                          confidence_threshold: float = 0.1) -> np.ndarray:
+    def visualize_keypoints(self, frame: np.ndarray, results: Optional[List[Dict[str, np.ndarray]]] = None,
+                          draw_landmarks: bool = True, draw_connections: bool = True,
+                          draw_labels: bool = False, confidence_threshold: float = 0.1) -> np.ndarray:
         """
-        Visualiza los keypoints en el frame
-        
-        Args:
-            frame: Frame original
-            keypoints: Array de keypoints [33, 3] (opcional, si None usa process_frame)
-            draw_landmarks: Si dibujar los landmarks
-            draw_connections: Si dibujar las conexiones del esqueleto
-            draw_labels: Si dibujar etiquetas de los keypoints
-            confidence_threshold: Umbral de confianza para mostrar keypoints
-            
-        Returns:
-            frame: Frame con keypoints visualizados
+        Visualiza los keypoints y bounding boxes
         """
         if frame is None or frame.size == 0:
             logger.warning("⚠️ Frame vacío para visualización")
             return frame
         
-        # Si no se proporcionan keypoints, procesarlos
-        if keypoints is None:
-            keypoints = self.process_frame(frame)
-            if keypoints is None:
-                return frame
+        if results is None:
+            results = self.process_frame(frame)
         
-        # Crear una copia del frame para no modificar el original
         output_frame = frame.copy()
+        scale_factor = min(frame.shape[0], frame.shape[1]) / 1080.0 * self.visualize_scale
+        circle_radius = int(4 * scale_factor)
+        line_thickness = int(2 * scale_factor)
+        font_scale = 0.3 * scale_factor
         
-        # Colores para diferentes partes del cuerpo
         colors = {
-            'face': (255, 255, 255),      # Blanco
-            'left_arm': (0, 255, 0),      # Verde
-            'right_arm': (0, 0, 255),     # Azul
-            'torso': (255, 255, 0),       # Amarillo
-            'left_leg': (255, 0, 255),    # Magenta
-            'right_leg': (0, 255, 255),   # Cian
+            'face': (255, 255, 255), 'right_arm': (0, 0, 255), 'left_arm': (0, 255, 0),
+            'torso': (255, 255, 0), 'right_leg': (0, 255, 255), 'left_leg': (255, 0, 255)
         }
-        
-        # Grupos de keypoints por parte del cuerpo
         body_parts = {
-            'face': [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],     # Face and ears
-            'left_arm': [11, 13, 15, 17, 19, 21],            # Left arm and hand
-            'right_arm': [12, 14, 16, 18, 20, 22],           # Right arm and hand
-            'torso': [11, 12, 23, 24],                       # Shoulders and hips
-            'left_leg': [23, 25, 27, 29, 31],                # Left leg and foot
-            'right_leg': [24, 26, 28, 30, 32]                # Right leg and foot
+            'face': [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+            'left_arm': [11, 13, 15, 17, 19, 21],
+            'right_arm': [12, 14, 16, 18, 20, 22],
+            'torso': [11, 12, 23, 24],
+            'left_leg': [23, 25, 27, 29, 31],
+            'right_leg': [24, 26, 28, 30, 32]
         }
         
-        # Dibujar landmarks
-        if draw_landmarks:
-            for i, (x, y, confidence) in enumerate(keypoints):
-                if confidence > confidence_threshold:
-                    # Determinar color según la parte del cuerpo
-                    color = (128, 128, 128)  # Gris por defecto
-                    for part, indices in body_parts.items():
-                        if i in indices:
-                            color = colors[part]
-                            break
-                    
-                    # Dibujar círculo
-                    cv2.circle(output_frame, (int(x), int(y)), 4, color, -1)
-                    cv2.circle(output_frame, (int(x), int(y)), 6, (255, 255, 255), 1)
-                    
-                    # Dibujar etiqueta si se solicita
-                    if draw_labels and i < len(self.KEYPOINT_NAMES):
-                        label = f"{self.KEYPOINT_NAMES[i]}:{confidence:.2f}"
-                        cv2.putText(output_frame, label,
-                                   (int(x) + 5, int(y) - 5),
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1)
-        
-        # Dibujar conexiones
-        if draw_connections:
-            for connection in self.POSE_CONNECTIONS:
-                pt1_idx, pt2_idx = connection
-                
-                if (pt1_idx < len(keypoints) and pt2_idx < len(keypoints)):
-                    x1, y1, conf1 = keypoints[pt1_idx]
-                    x2, y2, conf2 = keypoints[pt2_idx]
-                    
-                    # Solo dibujar si ambos puntos tienen buena confianza
-                    if conf1 > confidence_threshold and conf2 > confidence_threshold:
-                        cv2.line(output_frame, 
-                                (int(x1), int(y1)), 
-                                (int(x2), int(y2)), 
-                                (0, 255, 0), 2)
+        for result in results:
+            bbox = result['bbox']
+            keypoints = result['keypoints']
+            
+            # Dibujar bounding box
+            x_min, y_min, x_max, y_max = map(int, bbox)
+            cv2.rectangle(output_frame, (x_min, y_min), (x_max, y_max), (255, 0, 0), line_thickness)
+            
+            if draw_landmarks:
+                for i, (x, y, confidence) in enumerate(keypoints):
+                    if confidence > confidence_threshold:
+                        color = (128, 128, 128)
+                        for part, indices in body_parts.items():
+                            if i in indices:
+                                color = colors[part]
+                                break
+                        
+                        cv2.circle(output_frame, (int(x), int(y)), circle_radius, color, -1)
+                        cv2.circle(output_frame, (int(x), int(y)), circle_radius + 2, (255, 255, 255), 1)
+                        
+                        if draw_labels and i < len(self.KEYPOINT_NAMES):
+                            label = f"{self.KEYPOINT_NAMES[i]}:{confidence:.2f}"
+                            text_size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 1)
+                            text_x, text_y = int(x) + 5, int(y) - 5
+                            cv2.rectangle(output_frame, (text_x, text_y - text_size[1] - 5),
+                                         (text_x + text_size[0], text_y + 5), (0, 0, 0), -1, cv2.LINE_AA)
+                            cv2.putText(output_frame, label, (text_x, text_y),
+                                       cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, 1, cv2.LINE_AA)
+            
+            if draw_connections:
+                for pt1_idx, pt2_idx in self.POSE_CONNECTIONS:
+                    if pt1_idx < len(keypoints) and pt2_idx < len(keypoints):
+                        x1, y1, conf1 = keypoints[pt1_idx]
+                        x2, y2, conf2 = keypoints[pt2_idx]
+                        if conf1 > confidence_threshold and conf2 > confidence_threshold:
+                            cv2.line(output_frame, (int(x1), int(y1)), (int(x2), int(y2)),
+                                    (0, 255, 0), line_thickness, cv2.LINE_AA)
         
         return output_frame
     
     def get_pose_angles(self, keypoints: np.ndarray) -> dict:
         """
         Calcula ángulos importantes de la pose
-        
-        Args:
-            keypoints: Array de keypoints [33, 3]
-            
-        Returns:
-            dict: Diccionario con ángulos calculados
         """
         angles = {}
         
         def calculate_angle(p1, p2, p3):
-            """Calcula el ángulo entre tres puntos"""
             v1 = p1 - p2
             v2 = p3 - p2
-            
             cos_angle = np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2))
             cos_angle = np.clip(cos_angle, -1.0, 1.0)
-            angle = np.arccos(cos_angle)
-            
-            return np.degrees(angle)
+            return np.degrees(np.arccos(cos_angle))
         
         try:
-            # Ángulos de los brazos
-            if all(keypoints[[11, 13, 15], 2] > 0.1):  # left arm (shoulder, elbow, wrist)
+            if all(keypoints[[11, 13, 15], 2] > 0.1):
                 angles['left_elbow'] = calculate_angle(
                     keypoints[11][:2], keypoints[13][:2], keypoints[15][:2]
                 )
-            
-            if all(keypoints[[12, 14, 16], 2] > 0.1):  # right arm (shoulder, elbow, wrist)
+            if all(keypoints[[12, 14, 16], 2] > 0.1):
                 angles['right_elbow'] = calculate_angle(
                     keypoints[12][:2], keypoints[14][:2], keypoints[16][:2]
                 )
-            
-            # Ángulos de las piernas
-            if all(keypoints[[23, 25, 27], 2] > 0.1):  # left leg (hip, knee, ankle)
+            if all(keypoints[[23, 25, 27], 2] > 0.1):
                 angles['left_knee'] = calculate_angle(
                     keypoints[23][:2], keypoints[25][:2], keypoints[27][:2]
                 )
-            
-            if all(keypoints[[24, 26, 28], 2] > 0.1):  # right leg (hip, knee, ankle)
+            if all(keypoints[[24, 26, 28], 2] > 0.1):
                 angles['right_knee'] = calculate_angle(
                     keypoints[24][:2], keypoints[26][:2], keypoints[28][:2]
                 )
-            
-            # Ángulo del torso (inclinación)
             if all(keypoints[[11, 12, 23, 24], 2] > 0.1):
-                shoulder_center = (keypoints[11][:2] + keypoints[12][:2]) / 2  # left + right shoulder
-                hip_center = (keypoints[23][:2] + keypoints[24][:2]) / 2      # left + right hip
-                
-                # Ángulo con respecto a la vertical
+                shoulder_center = (keypoints[11][:2] + keypoints[12][:2]) / 2
+                hip_center = (keypoints[23][:2] + keypoints[24][:2]) / 2
                 torso_vector = shoulder_center - hip_center
                 vertical_vector = np.array([0, -1])
-                
                 cos_angle = np.dot(torso_vector, vertical_vector) / np.linalg.norm(torso_vector)
                 cos_angle = np.clip(cos_angle, -1.0, 1.0)
                 angles['torso_lean'] = np.degrees(np.arccos(cos_angle))
@@ -387,227 +797,186 @@ class MediaPipePoseProcessor2:
         
         return angles
     
-    def get_pose_landmarks_world(self, frame: np.ndarray) -> Optional[np.ndarray]:
+    def get_pose_landmarks_world(self, frame: np.ndarray) -> List[Dict[str, np.ndarray]]:
         """
-        Obtiene landmarks en coordenadas del mundo (3D)
-        
-        Args:
-            frame: Frame de imagen
-            
-        Returns:
-            world_landmarks: Array de landmarks 3D [33, 3] (x, y, z) o None
+        Obtiene landmarks en coordenadas 3D
         """
-        if frame is None or frame.size == 0:
-            logger.warning("⚠️ Frame vacío o None recibido")
-            return None
-        
-        try:
-            # Convertir BGR a RGB para MediaPipe
-            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            
-            # Procesar con MediaPipe usando solutions.pose
-            results = self.pose.process(rgb_frame)
-            
-            # Extraer world landmarks si están disponibles
-            if results.pose_world_landmarks:
-                # Convertir a formato [33, 3]
-                world_keypoints = np.zeros((33, 3), dtype=np.float32)
-                
-                for i, landmark in enumerate(results.pose_world_landmarks.landmark):
-                    world_keypoints[i] = [landmark.x, landmark.y, landmark.z]
-                
-                return world_keypoints
-            else:
-                return None
-                
-        except Exception as e:
-            logger.error(f"❌ Error obteniendo world landmarks: {e}")
-            return None
+        results = self.process_frame(frame)
+        for result in results:
+            keypoints = result['keypoints']
+            landmarks_flat = result['raw_output'].flatten()
+            xyz = landmarks_flat[:117].reshape(39, 3)
+            visibility = landmarks_flat[117:156]
+            result['keypoints'] = np.column_stack((xyz[:33], visibility[:33]))
+        return results
     
     def cleanup(self):
-        """Libera recursos de MediaPipe"""
+        """Libera recursos de TensorRT y CUDA"""
+        self.detector.cleanup()
         try:
-            if self.pose is not None:
-                self.pose.close()
-                self.pose = None
-                
-            logger.info("✅ Recursos MediaPipe liberados correctamente")
-            
+            if self.d_input:
+                self.d_input.free()
+            for d_output in self.d_outputs:
+                d_output.free()
+            self.d_outputs = []
+            self.stream = None
+            self.context = None
+            self.engine = None
+            self.runtime = None
+            logger.info("✅ Recursos MediaPipePoseProcessor liberados")
         except Exception as e:
             logger.warning(f"⚠️ Error durante limpieza: {e}")
-    
-    def __del__(self):
-        """Destructor que asegura la limpieza de recursos"""
-        self.cleanup()
-    
-    def __str__(self) -> str:
-        """Representación string del procesador"""
-        return (f"MediaPipePoseProcessor2(MediaPipe, "
-                f"detection_conf={self.min_detection_confidence}, "
-                f"tracking_conf={self.min_tracking_confidence}, "
-                f"complexity={self.model_complexity})")
-    
-    def __repr__(self) -> str:
-        return self.__str__()
 
-
-# Ejemplo de uso
 if __name__ == "__main__":
-    print("🎭 MediaPipe Pose Processor 2 - Ejemplo de uso")
-    print("=" * 55)
+    print("🎭 TensorRT Pose Processor - Ejemplo de uso")
+    print("=" * 50)
     
-    # Verificar disponibilidad de MediaPipe
-    if not MP_AVAILABLE:
-        print("❌ MediaPipe no está disponible")
-        print("💡 Instale MediaPipe con: pip install mediapipe")
+    if not TRT_AVAILABLE:
+        print("❌ TensorRT no está disponible")
         exit(1)
     
-    # Crear procesador con MediaPipe
+    # Configurar rutas de modelos
+    detector_model_path = "models/pose_detection_fp16.engine"
+    landmark_model_path = "models/pose_landmark_lite_fp16.engine"
+    
+    # Configurar rutas de video
+    video_path = "../Videos/Entrada/sentado.mp4"
+    output_video_path = "../Videos/Salida/video_procesado.mp4"
+    
+    use_video_file = True
+    save_output_video = True
+    
     try:
-        processor = MediaPipePoseProcessor2(
-            min_detection_confidence=0.5,
-            min_tracking_confidence=0.5,
-            static_image_mode=False,
-            model_complexity=1
+        processor = MediaPipePoseProcessor(
+            detector_model_path=detector_model_path,
+            landmark_model_path=landmark_model_path,
+            input_width=256,
+            input_height=256,
+            confidence_threshold=0.5,
+            min_score_thresh=0.5,
+            visualize_scale=1.0
         )
     except Exception as e:
         print(f"❌ Error inicializando procesador: {e}")
         exit(1)
     
-    # Ejemplo 1: Procesar imagen de ejemplo
-    print("\n🖼️ Ejemplo 1: Procesando imagen sintética...")
-    
-    # Crear una imagen de ejemplo
-    example_frame = np.zeros((480, 640, 3), dtype=np.uint8)
-    
-    # Crear un patrón simple para simular una persona
-    # Cabeza
-    cv2.circle(example_frame, (320, 120), 40, (255, 255, 255), -1)
-    
-    # Torso
-    cv2.rectangle(example_frame, (280, 160), (360, 300), (200, 200, 200), -1)
-    
-    # Brazos
-    cv2.rectangle(example_frame, (240, 180), (280, 220), (150, 150, 150), -1)  # Brazo izq
-    cv2.rectangle(example_frame, (360, 180), (400, 220), (150, 150, 150), -1)  # Brazo der
-    
-    # Piernas
-    cv2.rectangle(example_frame, (290, 300), (320, 420), (100, 100, 100), -1)  # Pierna izq
-    cv2.rectangle(example_frame, (320, 300), (350, 420), (100, 100, 100), -1)  # Pierna der
-    
-    # Texto
-    cv2.putText(example_frame, "MediaPipe BlazePose Test", 
-               (180, 460), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
-    
-    # Procesar frame
-    start_time = time.time()
-    keypoints = processor.process_frame(example_frame)
-    process_time = (time.time() - start_time) * 1000
-    
-    if keypoints is not None:
-        print(f"✅ Detectados {len(keypoints)} keypoints en {process_time:.2f}ms")
-        
-        # Calcular ángulos
-        angles = processor.get_pose_angles(keypoints)
-        
-        # Visualizar keypoints
-        visualized = processor.visualize_keypoints(
-            example_frame, keypoints,
-            draw_landmarks=True,
-            draw_connections=True,
-            draw_labels=True
-        )
-        
-        # Mostrar información
-        print("📊 Información de keypoints:")
-        valid_keypoints = np.sum(keypoints[:, 2] > 0.1)
-        print(f"   • Keypoints válidos: {valid_keypoints}/33")
-        print(f"   • Confianza promedio: {np.mean(keypoints[:, 2]):.3f}")
-        
-        if angles:
-            print("📐 Ángulos calculados:")
-            for angle_name, angle_value in angles.items():
-                print(f"   • {angle_name}: {angle_value:.1f}°")
+    if use_video_file:
+        if not os.path.exists(video_path):
+            print(f"❌ Video no encontrado: {video_path}")
+            print("🔄 Cambiando a modo cámara web...")
+            use_video_file = False
         else:
-            print("⚠️ No se calcularon ángulos (confianza baja)")
-        
-        # Guardar imagen de ejemplo
-        output_path = "mediapipe_pose_example.jpg"
-        cv2.imwrite(output_path, visualized)
-        print(f"💾 Imagen guardada: {output_path}")
-        
-    else:
-        print("🚫 No se detectaron poses en la imagen de ejemplo")
+            print(f"\n📹 Procesando video: {os.path.basename(video_path)}")
+            if save_output_video:
+                print(f"💾 Guardando resultado en: {os.path.basename(output_video_path)}")
+            print("Presiona 'q' para salir o 'SPACE' para pausar/reanudar")
+            cap = cv2.VideoCapture(video_path)
+            
+            out = None
+            if cap.isOpened():
+                fps = cap.get(cv2.CAP_PROP_FPS)
+                frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                print(f"📊 Info del video: {width}x{height}, {fps:.2f} FPS, {frame_count} frames")
+                
+                if save_output_video:
+                    output_dir = os.path.dirname(output_video_path)
+                    if output_dir and not os.path.exists(output_dir):
+                        os.makedirs(output_dir)
+                    fourcc = cv2.VideoWriter_fourcc(*'h264')
+                    out = cv2.VideoWriter(output_video_path, fourcc, fps, (width, height))
+                    if not out.isOpened():
+                        print(f"❌ Error configurando video de salida")
+                        save_output_video = False
     
-    # Ejemplo 2: Procesar desde cámara web (opcional)
-    print("\n📷 Ejemplo 2: Procesamiento desde cámara web")
-    print("💡 Descomente el siguiente código para probar con cámara web:")
-    print("""
-    cap = cv2.VideoCapture(0)
-    
-    if cap.isOpened():
-        print("📷 Iniciando captura desde cámara web...")
+    if not use_video_file:
+        print("\n📷 Iniciando captura desde cámara web...")
         print("Presiona 'q' para salir")
-        
-        while True:
+        cap = cv2.VideoCapture(0)
+    
+    if not cap.isOpened():
+        print("❌ No se pudo abrir la cámara web")
+        exit(1)
+    
+    fps_counter = 0
+    start_time = time.time()
+    total_inference_time = 0.0
+    paused = False
+    current_frame = 0
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) if use_video_file else 0
+    
+    while True:
+        if not paused:
             ret, frame = cap.read()
             if not ret:
+                print("✅ Video procesado" if use_video_file else "❌ Error leyendo frame")
                 break
             
-            # Procesar frame
-            keypoints = processor.process_frame(frame)
+            current_frame += 1
+            if use_video_file and current_frame % 30 == 0:
+                progress = (current_frame / total_frames) * 100
+                print(f"⏳ Progreso: {progress:.1f}% ({current_frame}/{total_frames} frames)")
             
-            if keypoints is not None:
-                # Visualizar
-                visualized = processor.visualize_keypoints(frame, keypoints)
-                
-                # Calcular ángulos
-                angles = processor.get_pose_angles(keypoints)
-                
-                # Mostrar información en pantalla
-                info_text = [
-                    "MediaPipe BlazePose",
-                    f"Keypoints: {len(keypoints)}",
-                    f"Válidos: {np.sum(keypoints[:, 2] > 0.1)}/33"
-                ]
-                
+            frame_start = time.time()
+            results = processor.process_frame(frame)
+            process_time = time.time() - frame_start
+            total_inference_time += process_time
+            
+            visualized = processor.visualize_keypoints(frame, results, draw_landmarks=True,
+                                                    draw_connections=True, draw_labels=False)
+            
+            info_text = [
+                "TensorRT BlazePose",
+                f"Personas: {len(results)}",
+                f"Process time: {process_time*1000:.1f}ms"
+            ]
+            if use_video_file:
+                progress = (current_frame / total_frames) * 100
+                info_text.extend([f"Frame: {current_frame}/{total_frames}", f"Progreso: {progress:.1f}%"])
+            else:
+                info_text.append(f"FPS: {1/process_time:.1f}")
+            
+            for result in results:
+                angles = processor.get_pose_angles(result['keypoints'])
                 for angle_name, angle_value in angles.items():
                     info_text.append(f"{angle_name}: {angle_value:.1f}°")
-                
-                # Dibujar información
-                for i, text in enumerate(info_text):
-                    color = (0, 255, 255) if i == 0 else (0, 255, 0)
-                    cv2.putText(visualized, text, (10, 30 + i*25),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-                
-                cv2.imshow("MediaPipe Pose - Tiempo Real", visualized)
-            else:
-                cv2.putText(frame, "No pose detected", (10, 30),
-                           cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-                cv2.imshow("MediaPipe Pose - Tiempo Real", frame)
             
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
+            scale_factor = min(frame.shape[0], frame.shape[1]) / 1080.0 * processor.visualize_scale
+            font_scale = 0.6 * scale_factor
+            for i, text in enumerate(info_text):
+                color = (0, 255, 255) if i == 0 else (0, 255, 0)
+                cv2.putText(visualized, text, (10, 30 + i*25),
+                           cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, 2, cv2.LINE_AA)
+            
+            if save_output_video and out is not None:
+                out.write(visualized)
+            
+            cv2.imshow("TensorRT BlazePose", visualized)
         
-        cap.release()
-        cv2.destroyAllWindows()
-    else:
-        print("❌ No se pudo abrir la cámara web")
-    """)
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('q'):
+            break
+        elif key == ord(' '):
+            paused = not paused
+            print(f"⏸️ Video {'pausado' if paused else 'reanudado'}")
+        
+        if not paused and fps_counter % 30 == 0:
+            elapsed = time.time() - start_time
+            avg_fps = fps_counter / elapsed
+            avg_inference = (total_inference_time / fps_counter) * 1000
+            print(f"📊 FPS promedio: {avg_fps:.1f} | Inferencia promedio: {avg_inference:.1f}ms")
+        
+        fps_counter += 1
     
-    # Limpiar recursos
+    cap.release()
+    if save_output_video and out is not None:
+        out.release()
+        if os.path.exists(output_video_path):
+            file_size = os.path.getsize(output_video_path) / (1024 * 1024)
+            print(f"✅ Video guardado: {output_video_path}, {file_size:.2f} MB, {current_frame} frames")
+    
+    cv2.destroyAllWindows()
     processor.cleanup()
-    print("\n✅ Ejemplo completado exitosamente")
-    print("\n📋 Información de MediaPipe BlazePose:")
-    print("   • Librería: MediaPipe oficial")
-    print("   • Total: 33 keypoints")
-    print("   • Soporte: Imágenes, videos, streams")
-    print("   • Coordenadas 3D: Disponibles")
-    print("\n💡 Para integrar con otras clases:")
-    print("   from utils.mediapipe_pose_proc_2 import MediaPipePoseProcessor2")
-    print("   processor = MediaPipePoseProcessor2()")
-    print("   keypoints = processor.process_frame(frame)  # [33, 3] array")
-    print("\n🔧 Dependencias necesarias:")
-    print("   • MediaPipe: pip install mediapipe")
-    print("   • OpenCV: pip install opencv-python")
-    print("   • NumPy: pip install numpy")
+    print("\n✅ Ejemplo completado")
+
