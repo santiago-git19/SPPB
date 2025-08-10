@@ -836,7 +836,7 @@ if __name__ == "__main__":
         exit(1)
     
     # Configurar rutas de modelos
-    detector_model_path = "models/pose_detection_fp16.engine"
+    detector_model_path = "models/pose_detection_fp16.ftlite"
     landmark_model_path = "models/pose_landmark_lite_fp16.engine"
     
     # Configurar rutas de video
