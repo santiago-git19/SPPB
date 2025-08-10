@@ -198,19 +198,32 @@ class MediaPipePoseProcessor:
             self.context = self.engine.create_execution_context()
             
             # Obtener información de los bindings
+            self.input_binding = None
+            self.output_binding = None
+            
             for i in range(self.engine.num_bindings):
                 if self.engine.binding_is_input(i):
                     self.input_binding = i
                     self.input_shape = self.engine.get_binding_shape(i)
                     self.input_size = trt.volume(self.input_shape)
+                    logger.info(f"📥 Input binding {i}: shape={self.input_shape}, size={self.input_size}")
                 else:
                     self.output_binding = i
                     self.output_shape = self.engine.get_binding_shape(i)
                     self.output_size = trt.volume(self.output_shape)
+                    logger.info(f"📤 Output binding {i}: shape={self.output_shape}, size={self.output_size}")
             
-            # Alocar memoria GPU
-            self.d_input = cuda.mem_alloc(self.input_size * np.dtype(np.float16).itemsize)
-            self.d_output = cuda.mem_alloc(self.output_size * np.dtype(np.float16).itemsize)
+            if self.input_binding is None or self.output_binding is None:
+                raise RuntimeError("No se pudieron encontrar bindings de entrada o salida")
+            
+            # Alocar memoria GPU con tamaños correctos
+            input_bytes = self.input_size * np.dtype(np.float32).itemsize  # Cambiar a float32
+            output_bytes = self.output_size * np.dtype(np.float32).itemsize  # Cambiar a float32
+            
+            self.d_input = cuda.mem_alloc(input_bytes)
+            self.d_output = cuda.mem_alloc(output_bytes)
+            
+            logger.info(f"💾 Memoria GPU asignada: entrada={input_bytes} bytes, salida={output_bytes} bytes")
             
             # Crear stream CUDA
             self.stream = cuda.Stream()
@@ -239,14 +252,18 @@ class MediaPipePoseProcessor:
         # Convertir BGR a RGB
         rgb_frame = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
         
-        # Normalizar a [0, 1] y convertir a float16
-        normalized = rgb_frame.astype(np.float16) / 255.0
+        # Normalizar a [0, 1] y convertir a float32
+        normalized = rgb_frame.astype(np.float32) / 255.0
         
-        # Reorganizar dimensiones de HWC a CHW
-        transposed = normalized.transpose(2, 0, 1)
-        
-        # Añadir dimensión batch: (1, C, H, W)
-        batched = np.expand_dims(transposed, axis=0)
+        # Si el modelo espera formato HWC (como indica la forma (1, 256, 256, 3))
+        # No necesitamos transponer
+        if len(self.input_shape) == 4 and self.input_shape[-1] == 3:
+            # Formato HWC: (batch, height, width, channels)
+            batched = np.expand_dims(normalized, axis=0)
+        else:
+            # Formato CHW: (batch, channels, height, width)
+            transposed = normalized.transpose(2, 0, 1)
+            batched = np.expand_dims(transposed, axis=0)
         
         # Asegurar que sea contiguo
         input_data = np.ascontiguousarray(batched)
@@ -312,12 +329,23 @@ class MediaPipePoseProcessor:
             # Copiar datos a GPU
             cuda.memcpy_htod_async(self.d_input, input_data, self.stream)
             
-            # Ejecutar inferencia
+            # Preparar bindings - usar direcciones como enteros
             bindings = [int(self.d_input), int(self.d_output)]
-            self.context.execute_async_v2(bindings, self.stream.handle)
             
-            # Copiar resultado de GPU a CPU
-            h_output = np.empty(self.output_shape, dtype=np.float16)
+            # Verificar que los bindings son válidos
+            if any(binding == 0 for binding in bindings):
+                logger.error("❌ Binding inválido detectado")
+                return None
+            
+            # Ejecutar inferencia con manejo de errores
+            success = self.context.execute_async_v2(bindings, self.stream.handle)
+            
+            if not success:
+                logger.error("❌ Error durante la ejecución de TensorRT")
+                return None
+            
+            # Copiar resultado de GPU a CPU - usar float32
+            h_output = np.empty(self.output_shape, dtype=np.float32)
             cuda.memcpy_dtoh_async(h_output, self.d_output, self.stream)
             self.stream.synchronize()
             
