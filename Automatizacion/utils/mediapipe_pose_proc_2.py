@@ -1,7 +1,23 @@
 #!/usr/bin/env python3
 """
 MediaPipe Pose Processor 2 - Detección de poses usando MediaPipe oficial
-========================================================================
+=============================================        self.min_detection_confidence = min_detection_confidence
+        self.min_tracking_confidence = min_tracking_confidence
+        self.static_image_mode = static_image_mode
+        self.model_complexity = model_complexity
+        self.smooth_landmarks = smooth_landmarks
+        
+        # Variables MediaPipe
+        self.pose = None
+        
+        # Cargar modelo MediaPipe
+        self._load_mediapipe_model()
+        
+        logger.info("✅ MediaPipe Pose Processor 2 inicializado correctamente")
+        logger.info(f"   🎯 Confianza detección: {min_detection_confidence}")
+        logger.info(f"   🎯 Confianza tracking: {min_tracking_confidence}")
+        logger.info(f"   🖼️ Modo imagen estática: {static_image_mode}")
+        logger.info(f"   🧠 Complejidad modelo: {model_complexity}")=========
 
 Clase para procesar frames de imágenes y detectar keypoints de poses humanas
 usando la librería oficial de MediaPipe PoseLandmarker.
@@ -132,8 +148,7 @@ class MediaPipePoseProcessor2:
                  min_tracking_confidence: float = 0.5,
                  static_image_mode: bool = False,
                  model_complexity: int = 1,
-                 smooth_landmarks: bool = True,
-                 enable_segmentation: bool = False):
+                 smooth_landmarks: bool = True):
         """
         Inicializa el procesador de poses MediaPipe
         
@@ -143,7 +158,6 @@ class MediaPipePoseProcessor2:
             static_image_mode: Si tratar cada imagen independientemente
             model_complexity: Complejidad del modelo (0, 1, 2)
             smooth_landmarks: Si suavizar landmarks entre frames
-            enable_segmentation: Si generar máscaras de segmentación
         """
         if not MP_AVAILABLE:
             raise ImportError("MediaPipe es requerido. Instale con: pip install mediapipe")
@@ -175,7 +189,6 @@ class MediaPipePoseProcessor2:
                 static_image_mode=self.static_image_mode,
                 model_complexity=self.model_complexity,
                 smooth_landmarks=self.smooth_landmarks,
-                enable_segmentation=self.enable_segmentation,
                 min_detection_confidence=self.min_detection_confidence,
                 min_tracking_confidence=self.min_tracking_confidence
             )
