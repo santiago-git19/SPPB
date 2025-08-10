@@ -156,10 +156,14 @@ class MediaPipePoseProcessor:
         self.output_binding = None
         self.d_input = None  # Memoria GPU para entrada
         self.d_output = None  # Memoria GPU para salida
+        self.d_outputs = []  # Lista de memorias GPU para múltiples salidas
         self.input_shape = None
         self.output_shape = None
+        self.output_shapes = []  # Lista de formas de todas las salidas
         self.input_size = None
         self.output_size = None
+        self.output_sizes = []  # Lista de tamaños de todas las salidas
+        self.output_bindings = []  # Lista de índices de salidas
         self.stream = None
         
         # Cargar modelo TensorRT
@@ -199,7 +203,10 @@ class MediaPipePoseProcessor:
             
             # Obtener información de los bindings
             self.input_binding = None
-            self.output_binding = None
+            self.output_bindings = []
+            self.output_shapes = []
+            self.output_sizes = []
+            self.d_outputs = []
             
             for i in range(self.engine.num_bindings):
                 if self.engine.binding_is_input(i):
@@ -208,22 +215,46 @@ class MediaPipePoseProcessor:
                     self.input_size = trt.volume(self.input_shape)
                     logger.info(f"📥 Input binding {i}: shape={self.input_shape}, size={self.input_size}")
                 else:
-                    self.output_binding = i
-                    self.output_shape = self.engine.get_binding_shape(i)
-                    self.output_size = trt.volume(self.output_shape)
-                    logger.info(f"📤 Output binding {i}: shape={self.output_shape}, size={self.output_size}")
+                    output_shape = self.engine.get_binding_shape(i)
+                    output_size = trt.volume(output_shape)
+                    self.output_bindings.append(i)
+                    self.output_shapes.append(output_shape)
+                    self.output_sizes.append(output_size)
+                    logger.info(f"📤 Output binding {i}: shape={output_shape}, size={output_size}")
             
-            if self.input_binding is None or self.output_binding is None:
+            if self.input_binding is None or len(self.output_bindings) == 0:
                 raise RuntimeError("No se pudieron encontrar bindings de entrada o salida")
             
-            # Alocar memoria GPU con tamaños correctos
-            input_bytes = self.input_size * np.dtype(np.float32).itemsize  # Cambiar a float32
-            output_bytes = self.output_size * np.dtype(np.float32).itemsize  # Cambiar a float32
+            # Usar la primera salida como salida principal (normalmente los landmarks)
+            self.output_binding = self.output_bindings[0]
+            self.output_shape = self.output_shapes[0]
+            self.output_size = self.output_sizes[0]
             
+            # Buscar la salida de landmarks (shape que termine en 195 o 99)
+            for i, shape in enumerate(self.output_shapes):
+                size = self.output_sizes[i]
+                if size == 195 or size == 99:  # Landmarks output
+                    self.output_binding = self.output_bindings[i]
+                    self.output_shape = self.output_shapes[i]
+                    self.output_size = self.output_sizes[i]
+                    logger.info(f"🎯 Usando salida de landmarks: binding {self.output_binding}, shape={shape}")
+                    break
+            
+            # Alocar memoria GPU para entrada
+            input_bytes = self.input_size * np.dtype(np.float32).itemsize
             self.d_input = cuda.mem_alloc(input_bytes)
-            self.d_output = cuda.mem_alloc(output_bytes)
             
-            logger.info(f"💾 Memoria GPU asignada: entrada={input_bytes} bytes, salida={output_bytes} bytes")
+            # Alocar memoria GPU para todas las salidas
+            for i, output_size in enumerate(self.output_sizes):
+                output_bytes = output_size * np.dtype(np.float32).itemsize
+                d_output = cuda.mem_alloc(output_bytes)
+                self.d_outputs.append(d_output)
+                logger.info(f"💾 Memoria GPU salida {i}: {output_bytes} bytes")
+            
+            # Mantener compatibilidad con código existente
+            self.d_output = self.d_outputs[0] if self.d_outputs else None
+            
+            logger.info(f"💾 Total memoria GPU: entrada={input_bytes} bytes")
             
             # Crear stream CUDA
             self.stream = cuda.Stream()
@@ -329,13 +360,20 @@ class MediaPipePoseProcessor:
             # Copiar datos a GPU
             cuda.memcpy_htod_async(self.d_input, input_data, self.stream)
             
-            # Preparar bindings - usar direcciones como enteros
-            bindings = [int(self.d_input), int(self.d_output)]
+            # Preparar bindings - incluir todas las salidas
+            bindings = [None] * self.engine.num_bindings
+            bindings[self.input_binding] = int(self.d_input)
             
-            # Verificar que los bindings son válidos
-            if any(binding == 0 for binding in bindings):
-                logger.error("❌ Binding inválido detectado")
-                return None
+            # Asignar todas las salidas
+            for i, output_binding in enumerate(self.output_bindings):
+                if i < len(self.d_outputs):
+                    bindings[output_binding] = int(self.d_outputs[i])
+            
+            # Verificar que todos los bindings necesarios están configurados
+            for i in range(self.engine.num_bindings):
+                if bindings[i] is None:
+                    logger.error(f"❌ Binding {i} no configurado")
+                    return None
             
             # Ejecutar inferencia con manejo de errores
             success = self.context.execute_async_v2(bindings, self.stream.handle)
@@ -344,10 +382,22 @@ class MediaPipePoseProcessor:
                 logger.error("❌ Error durante la ejecución de TensorRT")
                 return None
             
-            # Copiar resultado de GPU a CPU - usar float32
-            h_output = np.empty(self.output_shape, dtype=np.float32)
-            cuda.memcpy_dtoh_async(h_output, self.d_output, self.stream)
-            self.stream.synchronize()
+            # Copiar resultado de GPU a CPU - usar la salida principal
+            output_idx = 0  # Usar la primera salida por defecto
+            
+            # Buscar la salida de landmarks
+            for i, size in enumerate(self.output_sizes):
+                if size == 195 or size == 99:
+                    output_idx = i
+                    break
+            
+            if output_idx < len(self.d_outputs) and output_idx < len(self.output_shapes):
+                h_output = np.empty(self.output_shapes[output_idx], dtype=np.float32)
+                cuda.memcpy_dtoh_async(h_output, self.d_outputs[output_idx], self.stream)
+                self.stream.synchronize()
+            else:
+                logger.error("❌ Índice de salida fuera de rango")
+                return None
             
             # Postprocesar resultados
             keypoints = self._postprocess_output(h_output, original_width, original_height)
@@ -538,8 +588,14 @@ class MediaPipePoseProcessor:
                 self.d_input.free()
                 self.d_input = None
                 
+            if hasattr(self, 'd_outputs') and self.d_outputs:
+                for d_output in self.d_outputs:
+                    if d_output is not None:
+                        d_output.free()
+                self.d_outputs = []
+                
             if hasattr(self, 'd_output') and self.d_output is not None:
-                self.d_output.free()
+                # Ya liberado en d_outputs, solo resetear referencia
                 self.d_output = None
                 
             if hasattr(self, 'stream') and self.stream is not None:
