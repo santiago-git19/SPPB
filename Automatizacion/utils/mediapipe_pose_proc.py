@@ -153,17 +153,15 @@ class MediaPipePoseProcessor:
         self.context = None
         self.runtime = None
         self.input_binding = None
-        self.output_binding = None
+        self.output_bindings = []
         self.d_input = None  # Memoria GPU para entrada
-        self.d_output = None  # Memoria GPU para salida
         self.d_outputs = []  # Lista de memorias GPU para múltiples salidas
         self.input_shape = None
-        self.output_shape = None
         self.output_shapes = []  # Lista de formas de todas las salidas
         self.input_size = None
-        self.output_size = None
         self.output_sizes = []  # Lista de tamaños de todas las salidas
-        self.output_bindings = []  # Lista de índices de salidas
+        self.input_dtype = None
+        self.output_dtypes = []
         self.stream = None
         
         # Cargar modelo TensorRT
@@ -207,125 +205,150 @@ class MediaPipePoseProcessor:
             self.output_shapes = []
             self.output_sizes = []
             self.d_outputs = []
+            self.output_dtypes = []
             
             for i in range(self.engine.num_bindings):
                 if self.engine.binding_is_input(i):
                     self.input_binding = i
                     self.input_shape = self.engine.get_binding_shape(i)
                     self.input_size = trt.volume(self.input_shape)
-                    logger.info(f"📥 Input binding {i}: shape={self.input_shape}, size={self.input_size}")
+                    self.input_dtype = self.engine.get_binding_dtype(i)
+                    logger.info(f"📥 Input binding {i}: shape={self.input_shape}, dtype={self.input_dtype}")
                 else:
                     output_shape = self.engine.get_binding_shape(i)
                     output_size = trt.volume(output_shape)
+                    output_dtype = self.engine.get_binding_dtype(i)
                     self.output_bindings.append(i)
                     self.output_shapes.append(output_shape)
                     self.output_sizes.append(output_size)
-                    logger.info(f"📤 Output binding {i}: shape={output_shape}, size={output_size}")
+                    self.output_dtypes.append(output_dtype)
+                    logger.info(f"📤 Output binding {i}: shape={output_shape}, dtype={output_dtype}")
             
             if self.input_binding is None or len(self.output_bindings) == 0:
                 raise RuntimeError("No se pudieron encontrar bindings de entrada o salida")
             
-            # Usar la primera salida como salida principal (normalmente los landmarks)
-            self.output_binding = self.output_bindings[0]
-            self.output_shape = self.output_shapes[0]
-            self.output_size = self.output_sizes[0]
-            
-            # Buscar la salida de landmarks (shape que termine en 195 o 99)
-            for i, shape in enumerate(self.output_shapes):
-                size = self.output_sizes[i]
-                if size == 195 or size == 99:  # Landmarks output
-                    self.output_binding = self.output_bindings[i]
-                    self.output_shape = self.output_shapes[i]
-                    self.output_size = self.output_sizes[i]
-                    logger.info(f"🎯 Usando salida de landmarks: binding {self.output_binding}, shape={shape}")
-                    break
-            
             # Alocar memoria GPU para entrada
-            input_bytes = self.input_size * np.dtype(np.float32).itemsize
-            self.d_input = cuda.mem_alloc(input_bytes)
+            input_itemsize = trt.nptype(self.input_dtype).itemsize
+            self.d_input = cuda.mem_alloc(self.input_size * input_itemsize)
             
             # Alocar memoria GPU para todas las salidas
             for i, output_size in enumerate(self.output_sizes):
-                output_bytes = output_size * np.dtype(np.float32).itemsize
-                d_output = cuda.mem_alloc(output_bytes)
+                output_itemsize = trt.nptype(self.output_dtypes[i]).itemsize
+                d_output = cuda.mem_alloc(output_size * output_itemsize)
                 self.d_outputs.append(d_output)
-                logger.info(f"💾 Memoria GPU salida {i}: {output_bytes} bytes")
-            
-            # Mantener compatibilidad con código existente
-            self.d_output = self.d_outputs[0] if self.d_outputs else None
-            
-            logger.info(f"💾 Total memoria GPU: entrada={input_bytes} bytes")
+                logger.info(f"💾 Memoria GPU salida {i}: {output_size * output_itemsize} bytes")
             
             # Crear stream CUDA
             self.stream = cuda.Stream()
             
             logger.info(f"✅ Modelo TensorRT cargado: {os.path.basename(self.model_path)}")
             logger.info(f"   📐 Forma entrada: {self.input_shape}")
-            logger.info(f"   📊 Forma salida: {self.output_shape}")
+            logger.info(f"   📊 Formas salidas: {self.output_shapes}")
             
         except Exception as e:
             logger.error(f"❌ Error cargando modelo TensorRT: {e}")
             raise
     
-    def _preprocess_frame(self, frame: np.ndarray) -> np.ndarray:
+    def _preprocess_frame(self, frame: np.ndarray) -> Tuple[np.ndarray, float, int, int]:
         """
-        Preprocesa el frame para el modelo TensorRT
+        Preprocesa el frame para el modelo TensorRT preservando el aspect ratio con padding
         
         Args:
             frame: Frame en formato BGR
             
         Returns:
             input_data: Datos preprocesados para TensorRT
+            scale: Factor de escala aplicado
+            pad_left: Padding izquierdo aplicado
+            pad_top: Padding superior aplicado
         """
-        # Redimensionar al tamaño de entrada del modelo
-        resized = cv2.resize(frame, (self.input_width, self.input_height))
+        orig_h, orig_w = frame.shape[:2]
+        scale = min(self.input_width / orig_w, self.input_height / orig_h)
+        new_w = int(orig_w * scale)
+        new_h = int(orig_h * scale)
+        
+        # Resize preservando aspect ratio
+        resized = cv2.resize(frame, (new_w, new_h))
+        
+        # Calcular padding
+        pad_left = (self.input_width - new_w) // 2
+        pad_top = (self.input_height - new_h) // 2
+        
+        # Crear imagen padded con fondo negro
+        padded = np.zeros((self.input_height, self.input_width, 3), dtype=np.uint8)
+        padded[pad_top:pad_top + new_h, pad_left:pad_left + new_w] = resized
         
         # Convertir BGR a RGB
-        rgb_frame = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+        rgb_frame = cv2.cvtColor(padded, cv2.COLOR_BGR2RGB)
         
-        # Normalizar a [0, 1] y convertir a float32
+        # Normalizar a [0, 1]
         normalized = rgb_frame.astype(np.float32) / 255.0
         
-        # Si el modelo espera formato HWC (como indica la forma (1, 256, 256, 3))
-        # No necesitamos transponer
+        # Formato de entrada
         if len(self.input_shape) == 4 and self.input_shape[-1] == 3:
-            # Formato HWC: (batch, height, width, channels)
+            # HWC
             batched = np.expand_dims(normalized, axis=0)
         else:
-            # Formato CHW: (batch, channels, height, width)
+            # CHW
             transposed = normalized.transpose(2, 0, 1)
             batched = np.expand_dims(transposed, axis=0)
         
-        # Asegurar que sea contiguo
-        input_data = np.ascontiguousarray(batched)
+        # Convertir al dtype del input
+        input_data = np.ascontiguousarray(batched.astype(trt.nptype(self.input_dtype)))
         
-        return input_data
+        return input_data, scale, pad_left, pad_top
     
-    def _postprocess_output(self, output_data: np.ndarray, original_width: int, original_height: int) -> np.ndarray:
+    def _postprocess_output(self, output_data: np.ndarray, scale: float, pad_left: int, pad_top: int, original_width: int, original_height: int) -> np.ndarray:
         """
         Postprocesa los resultados del modelo TensorRT
         
         Args:
             output_data: Salida del modelo TensorRT
+            scale: Factor de escala del preprocesamiento
+            pad_left: Padding izquierdo
+            pad_top: Padding superior
             original_width: Ancho original del frame
             original_height: Alto original del frame
             
         Returns:
             keypoints: Array [33, 3] con keypoints (x, y, confidence)
         """
-        # Reshape a la forma esperada de keypoints
-        # El modelo debería devolver algo como [1, 195] que representa [33 * 3 + extras]
-        # Nos quedamos con los primeros 33*3 = 99 valores
-        landmarks_flat = output_data.flatten()[:99]  # 33 keypoints * 3 coords
+        # El output es típicamente [1, 195] para 39 keypoints * 5 (x,y,z,visibility,presence)
+        landmarks_flat = output_data.flatten()
         
-        # Reshape a [33, 3]
-        keypoints = landmarks_flat.reshape(33, 3)
+        if len(landmarks_flat) < 195:
+            logger.warning("⚠️ Salida del modelo más pequeña de lo esperado")
+            return np.zeros((33, 3), dtype=np.float32)
         
-        # Las coordenadas del modelo MediaPipe están normalizadas [0, 1]
-        # Convertir a coordenadas de píxeles del frame original
-        keypoints[:, 0] *= original_width   # x coordinates
-        keypoints[:, 1] *= original_height  # y coordinates
-        # keypoints[:, 2] ya es la confianza, no necesita escalado
+        # Parsear los 195 valores
+        xyz = landmarks_flat[:117].reshape(39, 3)
+        visibility = landmarks_flat[117:156]
+        presence = landmarks_flat[156:195]
+        
+        # Seleccionar los primeros 33 keypoints (ignorando auxiliares)
+        num_landmarks = 33
+        xyz = xyz[:num_landmarks]
+        visibility = visibility[:num_landmarks]
+        presence = presence[:num_landmarks]
+        
+        # Usar visibility como confianza principal (común en MediaPipe para 2D)
+        confidence = visibility
+        
+        # Crear keypoints [33, 3] con x, y, confidence
+        keypoints = np.column_stack((xyz[:, :2], confidence))
+        
+        # Las coordenadas x,y están normalizadas [0,1] relativas al input padded (256x256)
+        # Primero convertir a píxeles del padded
+        keypoints[:, 0] *= self.input_width
+        keypoints[:, 1] *= self.input_height
+        
+        # Remover padding
+        keypoints[:, 0] -= pad_left
+        keypoints[:, 1] -= pad_top
+        
+        # Escalar de vuelta al tamaño original
+        keypoints[:, 0] /= scale
+        keypoints[:, 1] /= scale
         
         # Filtrar keypoints con confianza baja
         keypoints[keypoints[:, 2] < self.confidence_threshold] = [0, 0, 0]
@@ -352,7 +375,7 @@ class MediaPipePoseProcessor:
             original_height, original_width = frame.shape[:2]
             
             # Preprocesar frame
-            input_data = self._preprocess_frame(frame)
+            input_data, scale, pad_left, pad_top = self._preprocess_frame(frame)
             
             # Copiar datos a GPU
             cuda.memcpy_htod_async(self.d_input, input_data, self.stream)
@@ -379,25 +402,24 @@ class MediaPipePoseProcessor:
                 logger.error("❌ Error durante la ejecución de TensorRT")
                 return None
             
-            # Copiar resultado de GPU a CPU - usar la salida principal
-            output_idx = 0  # Usar la primera salida por defecto
-            
-            # Buscar la salida de landmarks
+            # Encontrar el índice de la salida de landmarks (tamaño 195 o similar)
+            output_idx = 0
             for i, size in enumerate(self.output_sizes):
-                if size == 195 or size == 99:
+                if size == 195:
                     output_idx = i
                     break
             
-            if output_idx < len(self.d_outputs) and output_idx < len(self.output_shapes):
-                h_output = np.empty(self.output_shapes[output_idx], dtype=np.float32)
-                cuda.memcpy_dtoh_async(h_output, self.d_outputs[output_idx], self.stream)
-                self.stream.synchronize()
-            else:
+            if output_idx >= len(self.d_outputs) or output_idx >= len(self.output_shapes):
                 logger.error("❌ Índice de salida fuera de rango")
                 return None
             
+            # Copiar la salida seleccionada
+            h_output = np.empty(self.output_shapes[output_idx], dtype=trt.nptype(self.output_dtypes[output_idx]))
+            cuda.memcpy_dtoh_async(h_output, self.d_outputs[output_idx], self.stream)
+            self.stream.synchronize()
+            
             # Postprocesar resultados
-            keypoints = self._postprocess_output(h_output, original_width, original_height)
+            keypoints = self._postprocess_output(h_output, scale, pad_left, pad_top, original_width, original_height)
             
             logger.debug(f"✅ Detectados {len(keypoints)} keypoints con TensorRT")
             return keypoints
@@ -590,10 +612,6 @@ class MediaPipePoseProcessor:
                     if d_output is not None:
                         d_output.free()
                 self.d_outputs = []
-                
-            if hasattr(self, 'd_output') and self.d_output is not None:
-                # Ya liberado en d_outputs, solo resetear referencia
-                self.d_output = None
                 
             if hasattr(self, 'stream') and self.stream is not None:
                 self.stream = None
