@@ -821,9 +821,12 @@ if __name__ == "__main__":
     try:
         processor = MediaPipePoseProcessor(
             model_path=model_path,
+             debug=True, debug_every=5, debug_save_dir="debug_out"
+            '''
             input_width=256,
             input_height=256,
             confidence_threshold=0.5
+            '''
         )
     except Exception as e:
         print(f"❌ Error inicializando procesador: {e}")
