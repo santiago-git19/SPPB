@@ -808,7 +808,7 @@ if __name__ == "__main__":
     
     # Configurar ruta del video a procesar
     # ¡CAMBIA ESTA RUTA POR LA DE TU VIDEO!
-    video_path = r"../Videos/Entrada/sentado.mp4"  # <-- MODIFICA ESTA LÍNEA
+    video_path = r"../Videos/Entrada/WIN_20250722_13_47_30_Pro.mp4"  # <-- MODIFICA ESTA LÍNEA
     
     # Configurar ruta del video de salida
     # ¡CAMBIA ESTA RUTA POR DONDE QUIERES GUARDAR EL RESULTADO!
