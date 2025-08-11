@@ -241,71 +241,104 @@ class MediaPipePoseProcessor:
             logger.error(f"❌ Error cargando modelo TensorRT: {e}")
             raise
     
-    def _preprocess_frame(self, frame: np.ndarray) -> np.ndarray:
+    def _preprocess_frame(self, frame: np.ndarray) -> Tuple[np.ndarray, float, int, int]:
         """
-        Preprocesa el frame para el modelo TensorRT
+        Preprocesa el frame preservando aspect ratio y con padding, para evitar distorsión.
+        Devuelve el tensor listo para inferencia y los parámetros para deshacer la transformación.
         
         Args:
             frame: Frame en formato BGR
             
         Returns:
             input_data: Datos preprocesados para TensorRT
+            scale: Escala aplicada al frame original
+            pad_left: Padding aplicado a la izquierda
+            pad_top: Padding aplicado en la parte superior
         """
-        # Redimensionar al tamaño de entrada del modelo
-        resized = cv2.resize(frame, (self.input_width, self.input_height))
-        
-        # Convertir BGR a RGB
-        rgb_frame = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
-        
-        # Normalizar a [0, 1] y convertir a float32
-        normalized = rgb_frame.astype(np.float32) / 255.0
-        
-        # Si el modelo espera formato HWC (como indica la forma (1, 256, 256, 3))
-        # No necesitamos transponer
+        orig_h, orig_w = frame.shape[:2]
+        scale = min(self.input_width / orig_w, self.input_height / orig_h)
+        new_w = int(round(orig_w * scale))
+        new_h = int(round(orig_h * scale))
+
+        resized = cv2.resize(frame, (new_w, new_h))
+        pad_left = (self.input_width - new_w) // 2
+        pad_top = (self.input_height - new_h) // 2
+
+        padded = np.zeros((self.input_height, self.input_width, 3), dtype=np.float32)
+        padded[pad_top:pad_top + new_h, pad_left:pad_left + new_w] = resized.astype(np.float32)
+
+        rgb_frame = cv2.cvtColor(padded, cv2.COLOR_BGR2RGB)
+        normalized = rgb_frame / 255.0
+
+        # Formato esperado por el engine (habitualmente NHWC)
         if len(self.input_shape) == 4 and self.input_shape[-1] == 3:
-            # Formato HWC: (batch, height, width, channels)
             batched = np.expand_dims(normalized, axis=0)
         else:
-            # Formato CHW: (batch, channels, height, width)
-            transposed = normalized.transpose(2, 0, 1)
-            batched = np.expand_dims(transposed, axis=0)
-        
-        # Asegurar que sea contiguo
-        input_data = np.ascontiguousarray(batched)
-        
-        return input_data
+            batched = np.expand_dims(normalized.transpose(2, 0, 1), axis=0)
+
+        input_data = np.ascontiguousarray(batched, dtype=np.float32)
+        return input_data, scale, pad_left, pad_top
     
-    def _postprocess_output(self, output_data: np.ndarray, original_width: int, original_height: int) -> np.ndarray:
+    def _postprocess_output(self, output_data: np.ndarray,
+                            original_width: int,
+                            original_height: int,
+                            scale: float,
+                            pad_left: int,
+                            pad_top: int) -> np.ndarray:
         """
-        Postprocesa los resultados del modelo TensorRT
+        Postprocesa los resultados del modelo TensorRT.
+        Decodifica correctamente el vector de 195 floats (xyz + visibility + presence para 39 puntos)
+        y extrae los 33 puntos de cuerpo en 2D con su confianza (visibility).
         
         Args:
             output_data: Salida del modelo TensorRT
             original_width: Ancho original del frame
             original_height: Alto original del frame
+            scale: Escala aplicada durante el preprocesamiento
+            pad_left: Padding aplicado a la izquierda
+            pad_top: Padding aplicado en la parte superior
             
         Returns:
             keypoints: Array [33, 3] con keypoints (x, y, confidence)
         """
-        # Reshape a la forma esperada de keypoints
-        # El modelo debería devolver algo como [1, 195] que representa [33 * 3 + extras]
-        # Nos quedamos con los primeros 33*3 = 99 valores
-        landmarks_flat = output_data.flatten()[:99]  # 33 keypoints * 3 coords
-        
-        # Reshape a [33, 3]
-        keypoints = landmarks_flat.reshape(33, 3)
-        
-        # Las coordenadas del modelo MediaPipe están normalizadas [0, 1]
-        # Convertir a coordenadas de píxeles del frame original
-        keypoints[:, 0] *= original_width   # x coordinates
-        keypoints[:, 1] *= original_height  # y coordinates
-        # keypoints[:, 2] ya es la confianza, no necesita escalado
-        
-        # Filtrar keypoints con confianza baja
-        keypoints[keypoints[:, 2] < self.confidence_threshold] = [0, 0, 0]
-        
+        landmarks_flat = output_data.flatten().astype(np.float32)
+
+        keypoints_xy = None
+        conf = None
+
+        if landmarks_flat.size >= 195:
+            # Estructura: 117 (39*3 xyz) + 39 (visibility) + 39 (presence) = 195
+            xyz = landmarks_flat[:117].reshape(39, 3)
+            visibility = landmarks_flat[117:156]
+            # Tomar los primeros 33 puntos que corresponden al cuerpo
+            xy_norm = xyz[:33, :2]  # (33, 2)
+            conf = visibility[:33]  # (33,)
+            keypoints_xy = xy_norm
+        elif landmarks_flat.size >= 117:
+            # Solo xyz (39*3). Tomar los primeros 33 como cuerpo. Sin visibility, usar 1.0
+            xyz = landmarks_flat[:117].reshape(39, 3)
+            xy_norm = xyz[:33, :2]
+            conf = np.ones((33,), dtype=np.float32)
+            keypoints_xy = xy_norm
+        else:
+            logger.warning("⚠️ Salida del modelo más pequeña de lo esperado")
+            return np.zeros((33, 3), dtype=np.float32)
+
+        # Desnormalizar desde el lienzo de entrada (con padding) al frame original
+        x = keypoints_xy[:, 0] * self.input_width
+        y = keypoints_xy[:, 1] * self.input_height
+        x = (x - pad_left) / (scale + 1e-9)
+        y = (y - pad_top) / (scale + 1e-9)
+
+        # Clamping a los límites de la imagen
+        x = np.clip(x, 0, original_width - 1)
+        y = np.clip(y, 0, original_height - 1)
+
+        keypoints = np.stack([x, y, conf], axis=1)
+        # Filtrar por confianza
+        keypoints[ keypoints[:, 2] < self.confidence_threshold ] = [0, 0, 0]
         return keypoints.astype(np.float32)
-        
+
     def process_frame(self, frame: np.ndarray) -> Optional[np.ndarray]:
         """
         Procesa un frame y retorna los keypoints detectados usando TensorRT
@@ -322,11 +355,8 @@ class MediaPipePoseProcessor:
             return None
         
         try:
-            # Obtener dimensiones originales
             original_height, original_width = frame.shape[:2]
-            
-            # Preprocesar frame
-            input_data = self._preprocess_frame(frame)
+            input_data, scale, pad_left, pad_top = self._preprocess_frame(frame)
             
             # Copiar datos a GPU
             cuda.memcpy_htod_async(self.d_input, input_data, self.stream)
@@ -353,28 +383,38 @@ class MediaPipePoseProcessor:
                 logger.error("❌ Error durante la ejecución de TensorRT")
                 return None
             
-            # Encontrar el índice de la salida de landmarks (tamaño 195 o similar)
-            output_idx = 0
+            # Seleccionar salida de landmarks: preferir 195, si no existe, 117
+            output_idx = None
             for i, size in enumerate(self.output_sizes):
                 if size == 195:
                     output_idx = i
                     break
-            
-            if output_idx >= len(self.d_outputs) or output_idx >= len(self.output_shapes):
-                logger.error("❌ Índice de salida fuera de rango")
+            if output_idx is None:
+                for i, size in enumerate(self.output_sizes):
+                    if size == 117:
+                        output_idx = i
+                        break
+            if output_idx is None:
+                # Fallback: escoger la salida más pequeña 1D
+                min_size = float('inf')
+                for i, shape in enumerate(self.output_shapes):
+                    total = int(np.prod(shape))
+                    if total < min_size:
+                        min_size = total
+                        output_idx = i
+
+            if output_idx is None:
+                logger.error("❌ No se encontró salida de landmarks")
                 return None
-            
-            # Copiar la salida seleccionada
+
             h_output = np.empty(self.output_shapes[output_idx], dtype=np.float32)
             cuda.memcpy_dtoh_async(h_output, self.d_outputs[output_idx], self.stream)
             self.stream.synchronize()
-            
-            # Postprocesar resultados
-            keypoints = self._postprocess_output(h_output, original_width, original_height)
-            
+
+            keypoints = self._postprocess_output(h_output, original_width, original_height,
+                                                 scale, pad_left, pad_top)
             logger.debug(f"✅ Detectados {len(keypoints)} keypoints con TensorRT")
             return keypoints
-            
         except Exception as e:
             logger.error(f"❌ Error procesando frame con TensorRT: {e}")
             return None
@@ -547,6 +587,9 @@ class MediaPipePoseProcessor:
         Returns:
             None: Esta funcionalidad no está disponible con el modelo TensorRT
         """
+        # Marcar el parámetro como utilizado para evitar la advertencia del linter
+        _ = frame
+        
         logger.warning("⚠️ Coordenadas del mundo 3D no disponibles con modelo TensorRT")
         logger.info("💡 Para coordenadas 3D use MediaPipe BlazePose directamente")
         return None
@@ -634,7 +677,7 @@ if __name__ == "__main__":
                             found_models.append(os.path.join(path, file))
             
             if found_models:
-                print(f"📁 Modelos .engine encontrados:")
+                print("📁 Modelos .engine encontrados:")
                 for model in found_models:
                     print(f"   • {model}")
                 model_path = found_models[0]
