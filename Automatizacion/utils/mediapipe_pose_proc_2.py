@@ -34,7 +34,7 @@ import math
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Importar TensorRT y PyCUDA
+# Importar TensorRT, PyCUDA y TensorFlow Lite
 try:
     import tensorrt as trt
     import pycuda.driver as cuda
@@ -44,60 +44,87 @@ try:
 except ImportError as e:
     TRT_AVAILABLE = False
     logger.error(f"❌ TensorRT/PyCUDA no disponible: {e}")
-    logger.warning("💡 Instale TensorRT y PyCUDA para usar esta clase")
+    logger.warning("💡 Instale TensorRT y PyCUDA para usar landmarks con TensorRT")
+
+try:
+    import tensorflow as tf
+    TFLITE_AVAILABLE = True
+    logger.info("✅ TensorFlow Lite importado correctamente")
+except ImportError as e:
+    TFLITE_AVAILABLE = False
+    logger.error(f"❌ TensorFlow Lite no disponible: {e}")
+    logger.warning("💡 Instale TensorFlow para usar pose detection")
 
 class PoseDetector:
     """
-    Detector de personas usando pose_detection_fp16.engine con TensorRT
+    Detector de personas usando pose_detection.tflite con TensorFlow Lite
     """
-    def __init__(self, model_path: str = "pose_detection_fp16.engine",
+    def __init__(self, model_path: str = "pose_detection.tflite",
                  input_width: int = 224, input_height: int = 224,
                  min_score_thresh: float = 0.5):
         """
         Inicializa el detector de poses
         
         Args:
-            model_path: Ruta al modelo pose_detection_fp16.engine
+            model_path: Ruta al modelo pose_detection.tflite
             input_width: Ancho de entrada (224)
             input_height: Alto de entrada (224)
             min_score_thresh: Umbral de confianza para detecciones
         """
-        if not TRT_AVAILABLE:
-            raise ImportError("TensorRT y PyCUDA son requeridos")
+        if not TFLITE_AVAILABLE:
+            raise ImportError("TensorFlow Lite es requerido")
         
         self.model_path = model_path
         self.input_width = input_width
         self.input_height = input_height
         self.min_score_thresh = min_score_thresh
         
-        self.engine = None
-        self.context = None
-        self.runtime = None
-        self.input_binding = None
-        self.output_bindings = []
-        self.d_input = None
-        self.d_outputs = []
-        self.input_shape = None
-        self.output_shapes = []
-        self.output_sizes = []
-        self.stream = None
+        self.interpreter = None
+        self.input_details = None
+        self.output_details = None
         
-        self.dtype_size_map = {
-            trt.DataType.FLOAT: 4,
-            trt.DataType.HALF: 2,
-            trt.DataType.INT32: 4,
-            trt.DataType.INT8: 1
-        }
-        
-        self._load_tensorrt_model()
+        self._load_tflite_model()
         
         # SSD anchors para pose_detection
         self.anchors = self._generate_ssd_anchors()
         
-        logger.info("✅ PoseDetector inicializado")
-        logger.info(f"   � Modelo: {os.path.basename(model_path)}")
+        logger.info("✅ PoseDetector inicializado con TensorFlow Lite")
+        logger.info(f"   📁 Modelo: {os.path.basename(model_path)}")
         logger.info(f"   📐 Entrada: {input_width}x{input_height}")
         
+    def _load_tflite_model(self):
+        """Carga el modelo TensorFlow Lite"""
+        try:
+            if not os.path.exists(self.model_path):
+                raise FileNotFoundError(f"Modelo no encontrado: {self.model_path}")
+            
+            # Verificar magic number
+            with open(self.model_path, 'rb') as f:
+                magic = f.read(4)
+                if magic != b'TFL3':
+                    logger.warning(f"⚠️ Magic number inesperado: {magic}")
+            
+            # Cargar intérprete
+            self.interpreter = tf.lite.Interpreter(model_path=self.model_path)
+            self.interpreter.allocate_tensors()
+            
+            # Obtener detalles de entrada y salida
+            self.input_details = self.interpreter.get_input_details()
+            self.output_details = self.interpreter.get_output_details()
+            
+            logger.info(f"✅ Modelo TensorFlow Lite cargado: {os.path.basename(self.model_path)}")
+            logger.info(f"📥 Entradas: {len(self.input_details)}")
+            for i, detail in enumerate(self.input_details):
+                logger.info(f"   [{i}] {detail['name']}: {detail['shape']} - {detail['dtype']}")
+            
+            logger.info(f"📤 Salidas: {len(self.output_details)}")
+            for i, detail in enumerate(self.output_details):
+                logger.info(f"   [{i}] {detail['name']}: {detail['shape']} - {detail['dtype']}")
+            
+        except Exception as e:
+            logger.error(f"❌ Error cargando modelo TensorFlow Lite: {e}")
+            raise
+    
     def _generate_ssd_anchors(self) -> np.ndarray:
         """
         Genera anchors SSD según mediapipe/modules/pose_detection/pose_detection_cpu.pbtxt
@@ -130,62 +157,9 @@ class PoseDetector:
         
         return np.array(anchors, dtype=np.float32)
     
-    def _load_tensorrt_model(self):
-        """Carga el modelo TensorRT .engine"""
-        try:
-            if not os.path.exists(self.model_path):
-                raise FileNotFoundError(f"Modelo no encontrado: {self.model_path}")
-            
-            with open(self.model_path, 'rb') as f:
-                engine_data = f.read()
-            
-            trt_logger = trt.Logger(trt.Logger.WARNING)
-            self.runtime = trt.Runtime(trt_logger)
-            self.engine = self.runtime.deserialize_cuda_engine(engine_data)
-            
-            if self.engine is None:
-                raise RuntimeError("Error al deserializar el engine TensorRT")
-            
-            self.context = self.engine.create_execution_context()
-            
-            self.input_binding = None
-            self.output_bindings = []
-            self.output_shapes = []
-            self.output_sizes = []
-            self.d_outputs = []
-            
-            for i in range(self.engine.num_bindings):
-                if self.engine.binding_is_input(i):
-                    self.input_binding = i
-                    self.input_shape = self.engine.get_binding_shape(i)
-                    self.input_size = trt.volume(self.input_shape)
-                    input_dtype = self.engine.get_binding_dtype(i)
-                    input_itemsize = self.dtype_size_map.get(input_dtype, 4)
-                    self.h_input = cuda.pagelocked_empty(self.input_shape, dtype=np.float32)
-                    self.d_input = cuda.mem_alloc(self.input_size * input_itemsize)
-                    logger.info(f"📥 Input binding {i}: shape={self.input_shape}, dtype={input_dtype}")
-                else:
-                    output_shape = self.engine.get_binding_shape(i)
-                    output_size = trt.volume(output_shape)
-                    output_dtype = self.engine.get_binding_dtype(i)
-                    output_itemsize = self.dtype_size_map.get(output_dtype, 4)
-                    self.output_bindings.append(i)
-                    self.output_shapes.append(output_shape)
-                    self.output_sizes.append(output_size)
-                    self.d_outputs.append(cuda.mem_alloc(output_size * output_itemsize))
-                    logger.info(f"📤 Output binding {i}: shape={output_shape}, dtype={output_dtype}")
-            
-            self.stream = cuda.Stream()
-            
-            logger.info(f"✅ Modelo TensorRT cargado: {os.path.basename(self.model_path)}")
-            
-        except Exception as e:
-            logger.error(f"❌ Error cargando modelo TensorRT: {e}")
-            raise
-    
     def _preprocess_frame(self, frame: np.ndarray) -> Tuple[np.ndarray, float, int, int]:
         """
-        Preprocesa el frame para el modelo de detección
+        Preprocesa el frame para el modelo de detección TensorFlow Lite
         """
         if frame.shape[2] != 3:
             logger.error("❌ Frame debe ser BGR (3 canales)")
@@ -206,7 +180,8 @@ class PoseDetector:
         rgb_frame = cv2.cvtColor(padded, cv2.COLOR_BGR2RGB)
         normalized = rgb_frame / 255.0
         
-        batched = np.expand_dims(normalized, axis=0)
+        # TensorFlow Lite espera formato [batch, height, width, channels]
+        batched = np.expand_dims(normalized, axis=0).astype(np.float32)
         return batched, scale, pad_left, pad_top
     
     def _decode_detections(self, regressors: np.ndarray, classificators: np.ndarray,
@@ -323,30 +298,24 @@ class PoseDetector:
             if input_data is None:
                 return [], []
             
-            cuda.memcpy_htod_async(self.d_input, input_data, self.stream)
+            # Ejecutar inferencia con TensorFlow Lite
+            self.interpreter.set_tensor(self.input_details[0]['index'], input_data)
+            self.interpreter.invoke()
             
-            bindings = [None] * self.engine.num_bindings
-            bindings[self.input_binding] = int(self.d_input)
-            for i, output_binding in enumerate(self.output_bindings):
-                bindings[output_binding] = int(self.d_outputs[i])
+            # Obtener salidas
+            outputs = []
+            for output_detail in self.output_details:
+                output_data = self.interpreter.get_tensor(output_detail['index'])
+                outputs.append(output_data)
             
-            self.context.execute_async_v2(bindings, self.stream.handle)
-            
-            h_outputs = []
-            for i, shape in enumerate(self.output_shapes):
-                h_output = np.empty(shape, dtype=np.float32)
-                cuda.memcpy_dtoh_async(h_output, self.d_outputs[i], self.stream)
-                h_outputs.append(h_output)
-            
-            self.stream.synchronize()
-            
+            # Identificar salidas (regressors y classificators)
             regressors = None
             classificators = None
-            for i, shape in enumerate(self.output_shapes):
-                if shape[-1] == 12:
-                    regressors = h_outputs[i]
-                elif shape[-1] == 1:
-                    classificators = h_outputs[i]
+            for output in outputs:
+                if output.shape[-1] == 12:  # Regressors: bbox + keypoints
+                    regressors = output
+                elif output.shape[-1] == 1:  # Classificators: scores
+                    classificators = output
             
             if regressors is None or classificators is None:
                 logger.error("❌ Salidas del modelo no encontradas")
@@ -362,17 +331,11 @@ class PoseDetector:
             return [], []
     
     def cleanup(self):
-        """Libera recursos de TensorRT y CUDA"""
+        """Libera recursos de TensorFlow Lite"""
         try:
-            if self.d_input:
-                self.d_input.free()
-            for d_output in self.d_outputs:
-                d_output.free()
-            self.d_outputs = []
-            self.stream = None
-            self.context = None
-            self.engine = None
-            self.runtime = None
+            self.interpreter = None
+            self.input_details = None
+            self.output_details = None
             logger.info("✅ Recursos PoseDetector liberados")
         except Exception as e:
             logger.warning(f"⚠️ Error durante limpieza: {e}")
@@ -404,7 +367,7 @@ class MediaPipePoseProcessor:
     ]
     
     def __init__(self,
-                 detector_model_path: str = "models/pose_detection_fp16.engine",
+                 detector_model_path: str = "models/pose_detection.tflite",
                  landmark_model_path: str = "models/pose_landmark_lite_fp16.engine",
                  input_width: int = 256,
                  input_height: int = 256,
@@ -412,19 +375,21 @@ class MediaPipePoseProcessor:
                  min_score_thresh: float = 0.5,
                  visualize_scale: float = 1.0):
         """
-        Inicializa el procesador de poses con detección y landmarks
+        Inicializa el procesador de poses con detección TFLite y landmarks TensorRT
         
         Args:
-            detector_model_path: Ruta al modelo de detección
-            landmark_model_path: Ruta al modelo de landmarks
+            detector_model_path: Ruta al modelo de detección (.tflite)
+            landmark_model_path: Ruta al modelo de landmarks (.engine)
             input_width: Ancho de entrada para landmarks
             input_height: Alto de entrada para landmarks
             confidence_threshold: Umbral para landmarks
             min_score_thresh: Umbral para detecciones
             visualize_scale: Escala para visualización
         """
+        if not TFLITE_AVAILABLE:
+            raise ImportError("TensorFlow Lite es requerido para pose detection")
         if not TRT_AVAILABLE:
-            raise ImportError("TensorRT y PyCUDA son requeridos")
+            raise ImportError("TensorRT y PyCUDA son requeridos para pose landmarks")
         
         self.detector = PoseDetector(detector_model_path, 224, 224, min_score_thresh)
         self.model_path = landmark_model_path
@@ -455,8 +420,8 @@ class MediaPipePoseProcessor:
         self._load_tensorrt_model()
         
         logger.info("✅ MediaPipePoseProcessor inicializado")
-        logger.info(f"   � Landmark Model: {os.path.basename(landmark_model_path)}")
-        logger.info(f"   � Detector Model: {os.path.basename(detector_model_path)}")
+        logger.info(f"   📁 Landmark Model (TensorRT): {os.path.basename(landmark_model_path)}")
+        logger.info(f"   📁 Detector Model (TFLite): {os.path.basename(detector_model_path)}")
         
     def _load_tensorrt_model(self):
         """Carga el modelo de landmarks TensorRT"""
@@ -831,12 +796,16 @@ if __name__ == "__main__":
     print("🎭 TensorRT Pose Processor - Ejemplo de uso")
     print("=" * 50)
     
+    if not TFLITE_AVAILABLE:
+        print("❌ TensorFlow Lite no está disponible para pose detection")
+        exit(1)
+    
     if not TRT_AVAILABLE:
-        print("❌ TensorRT no está disponible")
+        print("❌ TensorRT no está disponible para pose landmarks")
         exit(1)
     
     # Configurar rutas de modelos
-    detector_model_path = "models/pose_detection_fp16.ftlite"
+    detector_model_path = "models/pose_detection.tflite"
     landmark_model_path = "models/pose_landmark_lite_fp16.engine"
     
     # Configurar rutas de video
