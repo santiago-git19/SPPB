@@ -130,7 +130,10 @@ class MediaPipePoseProcessor:
                  model_path: str = "pose_landmark_lite_fp16.engine",
                  input_width: int = 256,
                  input_height: int = 256,
-                 confidence_threshold: float = 0.5):
+                 confidence_threshold: float = 0.5,
+                 debug: bool = False,
+                 debug_every: int = 1,
+                 debug_save_dir: Optional[str] = None):
         """
         Inicializa el procesador de poses TensorRT
         
@@ -139,6 +142,9 @@ class MediaPipePoseProcessor:
             input_width: Ancho de entrada del modelo (256)
             input_height: Alto de entrada del modelo (256)
             confidence_threshold: Umbral de confianza para los keypoints
+            debug: Activar modo depuración
+            debug_every: Frecuencia de cuadros para guardar en debug (1 = todos)
+            debug_save_dir: Directorio para guardar datos de depuración
         """
         if not TRT_AVAILABLE:
             raise ImportError("TensorRT y PyCUDA son requeridos. Instale con: pip install pycuda")
@@ -161,6 +167,17 @@ class MediaPipePoseProcessor:
         self.input_size = None
         self.output_sizes = []  # Lista de tamaños de todas las salidas
         self.stream = None
+        
+        # Configuración de depuración
+        self.debug = debug
+        self.debug_every = max(1, debug_every)
+        self.debug_frame_index = 0
+        self.debug_save_dir = debug_save_dir
+        if self.debug_save_dir and not os.path.exists(self.debug_save_dir):
+            try:
+                os.makedirs(self.debug_save_dir, exist_ok=True)
+            except Exception as e:
+                logger.warning(f"⚠️ No se pudo crear directorio debug {self.debug_save_dir}: {e}")
         
         # Cargar modelo TensorRT
         self._load_tensorrt_model()
@@ -279,6 +296,74 @@ class MediaPipePoseProcessor:
         input_data = np.ascontiguousarray(batched, dtype=np.float32)
         return input_data, scale, pad_left, pad_top
     
+    def _decode_candidates(self, flat: np.ndarray, W: int, H: int) -> List[Tuple[str, np.ndarray]]:
+        """Genera varias decodificaciones candidatas de la salida para analizar cuál tiene sentido.
+        Devuelve lista de (nombre, keypoints[33,3]). No aplica filtrado de confianza todavía.
+        """
+        candidates = []
+        n = flat.size
+        try:
+            # Candidato 1: estructura oficial 195 = 117 xyz (39) + 39 vis + 39 pres -> usar primeros 33
+            if n >= 195:
+                xyz = flat[:117].reshape(39,3)
+                vis = flat[117:156]
+                kp = np.zeros((33,3), dtype=np.float32)
+                kp[:33,:2] = xyz[:33,:2] * [W, H]
+                kp[:33,2] = vis[:33]
+                candidates.append(("195_xyz_vis", kp))
+        except Exception as e:
+            if self.debug:
+                logger.debug(f"Decode 195_xyz_vis fallo: {e}")
+        try:
+            # Candidato 2: primeros 99 = 33*3 (xyz) normalizados
+            if n >= 99:
+                xyz = flat[:99].reshape(33,3)
+                kp = np.zeros((33,3), dtype=np.float32)
+                kp[:,:2] = xyz[:,:2] * [W, H]
+                kp[:,2] = np.clip(xyz[:,2], 0,1)
+                candidates.append(("99_xyz", kp))
+        except Exception as e:
+            if self.debug:
+                logger.debug(f"Decode 99_xyz fallo: {e}")
+        try:
+            # Candidato 3: primeros 66 = 33*2 (xy) ya normalizados
+            if n >= 66:
+                xy = flat[:66].reshape(33,2)
+                kp = np.zeros((33,3), dtype=np.float32)
+                kp[:,:2] = xy * [W, H]
+                kp[:,2] = 1.0
+                candidates.append(("66_xy", kp))
+        except Exception as e:
+            if self.debug:
+                logger.debug(f"Decode 66_xy fallo: {e}")
+        try:
+            # Candidato 4: si valores parecen ya en pixeles (media > 2), usar 99_xyz píxeles directos
+            if n >= 99:
+                xyz = flat[:99].reshape(33,3)
+                if np.median(xyz[:,0]) > 2 and np.median(xyz[:,0]) < W*1.2:
+                    kp = np.zeros((33,3), dtype=np.float32)
+                    kp[:,:2] = xyz[:,:2]
+                    kp[:,2] = np.clip(xyz[:,2],0,1)
+                    candidates.append(("99_xyz_pixels", kp))
+        except Exception as e:
+            if self.debug:
+                logger.debug(f"Decode 99_xyz_pixels fallo: {e}")
+        return candidates
+
+    def _score_candidate(self, name: str, kp: np.ndarray, W: int, H: int) -> float:
+        """Heurística para puntuar candidate keypoints: penaliza puntos fuera de imagen o todos colapsados."""
+        if kp.shape != (33,3):
+            return -1
+        xs, ys, cs = kp[:,0], kp[:,1], kp[:,2]
+        in_bounds = (xs>=0)&(xs<=W)&(ys>=0)&(ys<=H)
+        frac_in = in_bounds.mean()
+        spread_x = xs.max()-xs.min()
+        spread_y = ys.max()-ys.min()
+        spread = (spread_x/(W+1e-6) + spread_y/(H+1e-6)) / 2
+        conf_mean = np.clip(cs.mean(), 0,1)
+        # Score combinado
+        return float(0.4*frac_in + 0.3*spread + 0.3*conf_mean)
+
     def _postprocess_output(self, output_data: np.ndarray,
                             original_width: int,
                             original_height: int,
@@ -303,40 +388,57 @@ class MediaPipePoseProcessor:
         """
         landmarks_flat = output_data.flatten().astype(np.float32)
 
-        keypoints_xy = None
-        conf = None
+        if self.debug and self.debug_frame_index % self.debug_every == 0:
+            logger.info(f"🧪 DEBUG salida cruda len={landmarks_flat.size} min={landmarks_flat.min():.4f} max={landmarks_flat.max():.4f} mean={landmarks_flat.mean():.4f}")
+            logger.info("🧪 Primeros 30 valores: " + np.array2string(landmarks_flat[:30], precision=4, separator=','))
 
-        if landmarks_flat.size >= 195:
-            # Estructura: 117 (39*3 xyz) + 39 (visibility) + 39 (presence) = 195
-            xyz = landmarks_flat[:117].reshape(39, 3)
-            visibility = landmarks_flat[117:156]
-            # Tomar los primeros 33 puntos que corresponden al cuerpo
-            xy_norm = xyz[:33, :2]  # (33, 2)
-            conf = visibility[:33]  # (33,)
-            keypoints_xy = xy_norm
-        elif landmarks_flat.size >= 117:
-            # Solo xyz (39*3). Tomar los primeros 33 como cuerpo. Sin visibility, usar 1.0
-            xyz = landmarks_flat[:117].reshape(39, 3)
-            xy_norm = xyz[:33, :2]
-            conf = np.ones((33,), dtype=np.float32)
-            keypoints_xy = xy_norm
+        # Generar candidatos y puntuar
+        candidates = self._decode_candidates(landmarks_flat, self.input_width, self.input_height)
+        best_name = None
+        best_kp = None
+        best_score = -1
+        for name, kp in candidates:
+            score = self._score_candidate(name, kp, self.input_width, self.input_height)
+            if self.debug and self.debug_frame_index % self.debug_every == 0:
+                logger.info(f"🧪 Candidato {name} score={score:.3f}")
+            if score > best_score:
+                best_score = score
+                best_name = name
+                best_kp = kp
+
+        if best_kp is None:
+            logger.warning("⚠️ No se pudo decodificar salida - devolviendo ceros")
+            return np.zeros((33,3), dtype=np.float32)
+
+        # Inversa de padding/escala sólo si asume normalizados (no para *_pixels)
+        if not best_name.endswith("pixels"):
+            x = best_kp[:,0]
+            y = best_kp[:,1]
+            # best_kp ya está en espacio input (0..W/H) si venía de normalizados
+            x = (x - pad_left) / (scale + 1e-9)
+            y = (y - pad_top) / (scale + 1e-9)
+            conf = best_kp[:,2]
         else:
-            logger.warning("⚠️ Salida del modelo más pequeña de lo esperado")
-            return np.zeros((33, 3), dtype=np.float32)
+            # Coordenadas ya en pixeles originales (asumido)
+            x, y, conf = best_kp[:,0], best_kp[:,1], best_kp[:,2]
 
-        # Desnormalizar desde el lienzo de entrada (con padding) al frame original
-        x = keypoints_xy[:, 0] * self.input_width
-        y = keypoints_xy[:, 1] * self.input_height
-        x = (x - pad_left) / (scale + 1e-9)
-        y = (y - pad_top) / (scale + 1e-9)
+        x = np.clip(x, 0, original_width-1)
+        y = np.clip(y, 0, original_height-1)
+        keypoints = np.stack([x,y,conf], axis=1)
 
-        # Clamping a los límites de la imagen
-        x = np.clip(x, 0, original_width - 1)
-        y = np.clip(y, 0, original_height - 1)
+        if self.debug and self.debug_frame_index % self.debug_every == 0:
+            used = (keypoints[:,2] >= self.confidence_threshold).sum()
+            logger.info(f"🧪 Mejor candidato: {best_name} score={best_score:.3f} puntos_confianza={used}/33")
+            logger.info("🧪 Keypoints (primeros 10): " + np.array2string(keypoints[:10], precision=1, separator=','))
+            if self.debug_save_dir:
+                try:
+                    np.save(os.path.join(self.debug_save_dir, f"raw_out_{self.debug_frame_index:06d}.npy"), landmarks_flat)
+                    np.save(os.path.join(self.debug_save_dir, f"keypoints_{self.debug_frame_index:06d}.npy"), keypoints)
+                except Exception as e:
+                    logger.warning(f"⚠️ No se pudo guardar debug npy: {e}")
 
-        keypoints = np.stack([x, y, conf], axis=1)
-        # Filtrar por confianza
-        keypoints[ keypoints[:, 2] < self.confidence_threshold ] = [0, 0, 0]
+        # Filtrar
+        keypoints[keypoints[:,2] < self.confidence_threshold] = [0,0,0]
         return keypoints.astype(np.float32)
 
     def process_frame(self, frame: np.ndarray) -> Optional[np.ndarray]:
@@ -407,9 +509,27 @@ class MediaPipePoseProcessor:
                 logger.error("❌ No se encontró salida de landmarks")
                 return None
 
-            h_output = np.empty(self.output_shapes[output_idx], dtype=np.float32)
-            cuda.memcpy_dtoh_async(h_output, self.d_outputs[output_idx], self.stream)
-            self.stream.synchronize()
+            # Copiar todas las salidas a host si debug
+            host_outputs = None
+            if self.debug and self.debug_frame_index % self.debug_every == 0:
+                host_outputs = []
+                for i, shape in enumerate(self.output_shapes):
+                    h_tmp = np.empty(shape, dtype=np.float32)
+                    cuda.memcpy_dtoh_async(h_tmp, self.d_outputs[i], self.stream)
+                    host_outputs.append(h_tmp.copy())
+                self.stream.synchronize()
+                for i, arr in enumerate(host_outputs):
+                    flat = arr.flatten()
+                    logger.info(f"🧪 OUTPUT[{i}] shape={arr.shape} len={flat.size} min={flat.min():.4f} max={flat.max():.4f} mean={flat.mean():.4f}")
+                    logger.info("    muestra: " + np.array2string(flat[:20], precision=3, separator=','))
+
+            # Si ya copiamos todas, reutilizar
+            if self.debug and host_outputs is not None:
+                h_output = host_outputs[output_idx]
+            else:
+                h_output = np.empty(self.output_shapes[output_idx], dtype=np.float32)
+                cuda.memcpy_dtoh_async(h_output, self.d_outputs[output_idx], self.stream)
+                self.stream.synchronize()
 
             keypoints = self._postprocess_output(h_output, original_width, original_height,
                                                  scale, pad_left, pad_top)
