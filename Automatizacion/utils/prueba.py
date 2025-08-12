@@ -1,51 +1,43 @@
 import cv2
-import mediapipe as mp
-import tensorflow as tf
 import numpy as np
+from utils.mediapipe_pose_proc import MediaPipePoseProcessor
 
-mp_pose = mp.solutions.pose
-
-interpreter = tf.lite.Interpreter("../models/pose_landmark_lite.tflite")
-interpreter.allocate_tensors()
-
+# Cargar imagen
 img = cv2.imread('persona.PNG')
-rgb_img = cv2.resize(img, (256, 256))
-rgb_img = cv2.cvtColor(rgb_img, cv2.COLOR_BGR2RGB)
+if img is None:
+    print("❌ Error: No se pudo cargar la imagen. Verifica la ruta del archivo.")
+    exit(1)
 height, width = img.shape[:2]
 
-input_details = interpreter.get_input_details()
-output_details = interpreter.get_output_details()
-print('input_details: ', input_details)
-print('output_details: ', output_details)
+# Inicializar el procesador TensorRT
+processor = MediaPipePoseProcessor(
+    model_path="../models/pose_landmark_lite_fp16.engine",
+    input_width=256,
+    input_height=256,
+    confidence_threshold=0.0  # Mostrar todos los puntos
+)
 
-rgb_img = np.expand_dims(rgb_img, 0)
-input = (rgb_img / 255).astype(np.float32)
+# Procesar la imagen para obtener keypoints
+keypoints = processor.process_frame(img)
+if keypoints is None:
+    print("❌ No se detectaron keypoints.")
+    exit(1)
 
-interpreter.set_tensor(input_details[0]['index'], input)
-interpreter.invoke()
-output = interpreter.get_tensor(output_details[0]['index'])
-output = np.reshape(output, (1, 1, 39, 5))
+# Dibujar keypoints y conexiones
+for i, (x, y, conf) in enumerate(keypoints):
+    if conf > 0:
+        cv2.circle(img, (int(x), int(y)), 4, (255, 255, 255), -1)
 
-kp = list()
-for i in output[0][0]:
-    kp.append(i.tolist())
+for pt1, pt2 in processor.POSE_CONNECTIONS:
+    x1, y1, c1 = keypoints[pt1]
+    x2, y2, c2 = keypoints[pt2]
+    if c1 > 0 and c2 > 0:
+        cv2.line(img, (int(x1), int(y1)), (int(x2), int(y2)), (0, 0, 255), 2)
 
-for i in kp:
-    x, y = int(i[0] / 256 * width), int(i[1] / 256 * height)
-    cv2.circle(img, (x, y), 0, (255, 255, 255), 10)
-
-kp = np.array(kp)
-for _c in mp_pose.POSE_CONNECTIONS:
-    x1, y1, x2, y2 = int(kp[_c[0], 0] / 256 * width), int(kp[_c[0], 1] / 256 * height), int(kp[_c[1], 0] / 256 * width), int(kp[_c[1], 1] / 256 * height)
-    cv2.line(img, (x1, y1), (x2, y2), (0, 0, 255), 3)
-
-cv2.namedWindow("MediaPipe Pose", 0)
-cv2.resizeWindow('MediaPipe Pose', 1200, 600)
-#cv2.imshow('MediaPipe Pose', img)
-
-# Guardar la imagen procesada en la carpeta 'utils'
-output_path = 'pose_output.png'
+# Guardar la imagen procesada
+output_path = 'pose_output_trt.png'
 cv2.imwrite(output_path, img)
 print(f"✅ Imagen procesada guardada en: {output_path}")
 
-cv2.waitKey(0)
+# Liberar recursos
+processor.cleanup()
