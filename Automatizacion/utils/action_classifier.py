@@ -141,7 +141,8 @@ class TRTPoseClassifier:
             max_persons: Número máximo de personas a procesar (M dimension)
             graph_strategy: Estrategia del grafo ('spatial', 'uniform', 'distance')
         """
-        print("holaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        print("1.------------------------------------------------------------------------------------")
+        logger.info("1.------------------------------------------------------------------------------------")
         self.model_path = model_path
         self.input_keypoint_format = input_keypoint_format.lower()
         self.keypoint_format = keypoint_format.lower()
