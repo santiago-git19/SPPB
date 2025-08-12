@@ -642,10 +642,6 @@ class MediaPipeWithClassifier:
             out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
         
         logger.info("🎥 Iniciando procesamiento MediaPipe + Validación + Clasificación...")
-        logger.info("   Presiona 'q' para salir")
-        logger.info("   Presiona 'r' para reiniciar secuencia de clasificación")
-        logger.info("   Presiona 'v' para alternar modo validación")
-        logger.info("   Presiona 's' para guardar estadísticas de validación")
         
         try:
             while True:
@@ -659,25 +655,9 @@ class MediaPipeWithClassifier:
                 # Dibujar resultados
                 result_frame = self.draw_results_with_validation(frame, frame_result)
                 
-                # Mostrar
-                cv2.imshow('MediaPipe + Validación + Clasificación', result_frame)
-                
                 # Guardar si se especifica
                 if out:
                     out.write(result_frame)
-                
-                # Controles de teclado
-                key = cv2.waitKey(1) & 0xFF
-                if key == ord('q'):
-                    break
-                elif key == ord('r'):
-                    self.pose_classifier.reset_sequence()
-                    logger.info("🔄 Secuencia de clasificación reiniciada")
-                elif key == ord('v'):
-                    self.validation_mode = not self.validation_mode
-                    logger.info(f"🔍 Validación {'activada' if self.validation_mode else 'desactivada'}")
-                elif key == ord('s'):
-                    self.save_validation_report()
                 
         except KeyboardInterrupt:
             logger.info("⚠️ Procesamiento interrumpido")
@@ -686,7 +666,6 @@ class MediaPipeWithClassifier:
             cap.release()
             if out:
                 out.release()
-            cv2.destroyAllWindows()
             
             # Mostrar estadísticas finales
             self._print_final_statistics()
