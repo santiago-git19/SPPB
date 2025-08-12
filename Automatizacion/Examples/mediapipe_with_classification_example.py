@@ -107,14 +107,11 @@ class PoseClassifierPython36:
                 
                 # Prueba básica de importación
                 test_script = f'''
-print("holaaa")
 import sys
 import os
 sys.path.append("{str(Path(__file__).resolve().parent.parent)}")
 try:
-    print("hola 1")
     from utils.action_classifier import create_pose_classifier
-    print("hola 2")
     print("SUCCESS: action_classifier importado correctamente")
 except ImportError as e:
     print(f"ERROR: No se pudo importar action_classifier: {{e}}")
@@ -274,6 +271,14 @@ except Exception as e:
                     if line:
                         logger.debug(f"[CLF36] {line}")
             threading.Thread(target=_stderr_reader, args=(self._worker,), daemon=True).start()
+
+            def _stdout_reader(proc):
+                for line in proc.stdout:
+                    line = line.rstrip()
+                    if line:
+                        logger.info(f"[CLF36 STDOUT] {line}")
+
+            threading.Thread(target=_stdout_reader, args=(self._worker,), daemon=True).start()
             logger.info("✅ Clasificador persistente iniciado")
         except Exception as e:
             logger.error(f"❌ No se pudo iniciar proceso persistente: {e}")

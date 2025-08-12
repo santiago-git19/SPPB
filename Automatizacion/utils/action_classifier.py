@@ -584,6 +584,8 @@ class TRTPoseClassifier:
             # Añadir al buffer temporal
             self.sequence_buffer.append(normalized_keypoints)
             
+            print(self.sequence_buffer)
+
             # Si tenemos suficientes frames, clasificar
             if len(self.sequence_buffer) >= self.sequence_length:
                 return self._classify_sequence()
