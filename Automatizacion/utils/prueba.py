@@ -1,6 +1,6 @@
 import cv2
 import numpy as np
-from utils.mediapipe_pose_proc import MediaPipePoseProcessor
+from mediapipe_pose_proc import MediaPipePoseProcessor
 
 # Cargar imagen
 img = cv2.imread('persona.PNG')
