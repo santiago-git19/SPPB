@@ -404,7 +404,7 @@ class TRTPoseClassifier:
     
     def _normalize_keypoints(self, keypoints: np.ndarray) -> np.ndarray:
         """
-        Normaliza las coordenadas de keypoints entre 0 y 224
+        Normaliza las coordenadas de keypoints entre -1 y 1
 
         Args:
             keypoints: Array [num_keypoints, 3]
@@ -420,14 +420,14 @@ class TRTPoseClassifier:
         if np.any(valid_mask):
             valid_keypoints = keypoints[valid_mask]
 
-            # Normalizar coordenadas X e Y al rango [0, 224]
+            # Normalizar coordenadas X e Y al rango [-1, 1]
             min_x, max_x = np.min(valid_keypoints[:, 0]), np.max(valid_keypoints[:, 0])
             min_y, max_y = np.min(valid_keypoints[:, 1]), np.max(valid_keypoints[:, 1])
 
             if max_x > min_x:  # Evitar división por cero
-                normalized[valid_mask, 0] = 224 * (valid_keypoints[:, 0] - min_x) / (max_x - min_x)
+                normalized[valid_mask, 0] = 2 * (valid_keypoints[:, 0] - min_x) / (max_x - min_x) - 1
             if max_y > min_y:
-                normalized[valid_mask, 1] = 224 * (valid_keypoints[:, 1] - min_y) / (max_y - min_y)
+                normalized[valid_mask, 1] = 2 * (valid_keypoints[:, 1] - min_y) / (max_y - min_y) - 1
 
         return normalized
 

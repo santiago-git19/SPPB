@@ -282,6 +282,7 @@ except Exception as e:
         Procesa keypoints usando el clasificador en Python 3.6
         """
         # Ruta optimizada si proceso persistente activo
+        print("\n" + keypoints + "\n")
         if self._persistent and self._worker and self._worker.stdin and self._worker.poll() is None:
             try:
                 payload = {'keypoints': keypoints.tolist()}
@@ -461,7 +462,7 @@ class MediaPipeWithClassifier:
     def __init__(self, 
                  mediapipe_model_path: str,
                  pose_classifier_model_path: str,
-                 validation_mode: bool = True,
+                 validation_mode: bool = False,
                  fast_mode: bool = False,
                  parallel_classification: bool = True):
         """
