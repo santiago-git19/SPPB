@@ -513,7 +513,7 @@ class TRTPoseClassifier:
         
         # Convertir secuencia a array
         sequence_list = list(self.sequence_buffer)
-        print(sequence_list)
+        logger.info(sequence_list)
         
         # Stack temporal: (T, V, C)
         temporal_sequence = np.stack(sequence_list, axis=0)
