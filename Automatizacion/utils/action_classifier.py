@@ -142,7 +142,6 @@ class TRTPoseClassifier:
             graph_strategy: Estrategia del grafo ('spatial', 'uniform', 'distance')
         """
         print("1.------------------------------------------------------------------------------------")
-        logger.info("1.------------------------------------------------------------------------------------")
         self.model_path = model_path
         self.input_keypoint_format = input_keypoint_format.lower()
         self.keypoint_format = keypoint_format.lower()
@@ -576,7 +575,7 @@ class TRTPoseClassifier:
             # Procesar keypoints según formato del modelo
             processed_keypoints = self._convert_keypoints_format(adjusted_keypoints)
             
-            print("\n" + str(processed_keypoints) + "\n")
+            #print("\n" + str(processed_keypoints) + "\n")
 
             # Normalizar coordenadas
             normalized_keypoints = self._normalize_keypoints(processed_keypoints)
@@ -584,7 +583,7 @@ class TRTPoseClassifier:
             # Añadir al buffer temporal
             self.sequence_buffer.append(normalized_keypoints)
             
-            print(self.sequence_buffer)
+            #print(self.sequence_buffer)
 
             # Si tenemos suficientes frames, clasificar
             if len(self.sequence_buffer) >= self.sequence_length:
