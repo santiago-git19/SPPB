@@ -490,7 +490,7 @@ class MediaPipeWithClassifier:
         logger.info("🔧 Inicializando clasificador de poses (Python 3.6 subprocess)...")
         self.pose_classifier = PoseClassifierPython36(
             model_path=pose_classifier_model_path,
-            sequence_length=15,  # Secuencia más corta para pruebas
+            sequence_length=30,  # Secuencia más corta para pruebas
             confidence_threshold=0.05,  # Umbral más bajo
             persistent=True
         )
