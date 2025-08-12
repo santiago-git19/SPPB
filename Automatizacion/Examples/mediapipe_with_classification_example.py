@@ -32,6 +32,9 @@ import tempfile
 import os
 import sys
 from pathlib import Path
+import threading
+import queue
+
 # Añadir el directorio 'Automatizacion' al sys.path
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
@@ -50,12 +53,16 @@ SLOW_FRAME_THRESHOLD_MS = 150.0
 class PoseClassifierPython36:
     """
     Wrapper para el clasificador de poses que se ejecuta en Python 3.6 via subprocess
+    Optimizado: soporta modo persistente evitando spawn por frame y usando comunicación
+    por stdin/stdout con JSON delimitado por líneas.
     """
     
-    def __init__(self, model_path: str, sequence_length: int = 30, confidence_threshold: float = 0.2):
+    def __init__(self, model_path: str, sequence_length: int = 30, confidence_threshold: float = 0.2,
+                 persistent: bool = True):
         self.model_path = model_path
         self.sequence_length = sequence_length
         self.confidence_threshold = confidence_threshold
+        self._persistent = persistent
         
         # Crear directorio temporal para comunicación entre procesos
         self.temp_dir = tempfile.mkdtemp(prefix="pose_classifier_")
@@ -84,7 +91,11 @@ class PoseClassifierPython36:
         
         # Verificar que Python 3.6 esté disponible
         self._test_python36_availability()
-    
+        self._worker = None
+        self._worker_lock = threading.Lock()
+        if self._persistent:
+            self._start_persistent_process()
+ 
     def _test_python36_availability(self):
         """Verifica que Python 3.6 esté disponible y funcional"""
         try:
@@ -128,8 +139,8 @@ except ImportError as e:
     def _create_classifier_script(self) -> str:
         """Crea el script de clasificación para Python 3.6"""
         script_path = os.path.join(self.temp_dir, "classifier_worker.py")
-        
-        script_content = f'''#!/usr/bin/env python3.6
+        # Usamos plantilla con placeholders para evitar conflictos con f-strings internos
+        script_template = """#!/usr/bin/env python3.6
 import json
 import sys
 import os
@@ -137,11 +148,11 @@ import numpy as np
 import traceback
 
 # Añadir path
-sys.path.append("{str(Path(__file__).resolve().parent.parent)}")
+sys.path.append("__PY_PATH__")
 
 def debug_print(msg):
-    """Debug helper"""
-    print(f"[DEBUG CLASSIFIER] {{msg}}", file=sys.stderr)
+    # Debug helper
+    print(f"[DEBUG CLASSIFIER] {msg}", file=sys.stderr)
 
 try:
     debug_print("Iniciando importación del clasificador...")
@@ -151,161 +162,181 @@ try:
     # Crear clasificador
     debug_print("Creando clasificador...")
     classifier = create_pose_classifier(
-        model_path="{self.model_path}",
+        model_path="__MODEL_PATH__",
         input_keypoint_format='mediapipe',
         keypoint_format='nvidia',
-        sequence_length={self.sequence_length},
-        confidence_threshold={self.confidence_threshold}
+        sequence_length=__SEQ_LEN__,
+        confidence_threshold=__CONF_THRESH__
     )
     debug_print("Clasificador creado exitosamente")
     
+    def classify_array(keypoints):
+        try:
+            result = classifier.process_keypoints(keypoints)
+            return {'success': True, 'result': result if result else {'error': True, 'message': 'Classifier returned None'}}
+        except Exception as e:
+            return {'success': False, 'error': str(e), 'traceback': traceback.format_exc()}
+    
+    def loop_mode():
+        debug_print("Entrando en loop persistente")
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            if line == 'QUIT':
+                print(json.dumps({'quit': True}))
+                sys.stdout.flush()
+                break
+            try:
+                payload = json.loads(line)
+                kps = np.array(payload['keypoints'], dtype=float)
+                out = classify_array(kps)
+                out['debug_info'] = {
+                    'shape': list(kps.shape),
+                    'valid_keypoints': int(np.sum(kps[:,2] > 0.1))
+                }
+                print(json.dumps(out))
+                sys.stdout.flush()
+            except Exception as e:
+                print(json.dumps({'success': False, 'error': str(e), 'traceback': traceback.format_exc()}))
+                sys.stdout.flush()
+        debug_print("Loop persistente finalizado")
+    
     def process_keypoints(input_file, output_file):
         try:
-            debug_print(f"Procesando archivo: {{input_file}}")
-            
-            # Leer keypoints del archivo
+            debug_print(f"Procesando archivo: {input_file}")
             with open(input_file, 'r') as f:
                 data = json.load(f)
-            
             keypoints = np.array(data['keypoints'])
-            debug_print(f"Keypoints shape: {{keypoints.shape}}")
-            debug_print(f"Keypoints válidos: {{np.sum(keypoints[:, 2] > 0.1)}}")
-            
-            # Procesar con el clasificador
-            debug_print("Procesando con clasificador...")
-            result = classifier.process_keypoints(keypoints)
-            debug_print(f"Resultado: {{result}}")
-            
-            # Escribir resultado
-            output_data = {{
-                'success': True,
-                'result': result if result else {{'error': True, 'message': 'Classifier returned None'}},
-                'stats': classifier.get_statistics() if hasattr(classifier, 'get_statistics') else {{}},
-                'debug_info': {{
-                    'keypoints_received': keypoints.shape,
-                    'valid_keypoints': int(np.sum(keypoints[:, 2] > 0.1))
-                }}
-            }}
-            
+            debug_print(f"Keypoints shape: {keypoints.shape}")
+            debug_print(f"Keypoints válidos: {np.sum(keypoints[:, 2] > 0.1)}")
+            out = classify_array(keypoints)
+            out['debug_info'] = {
+                'keypoints_received': list(keypoints.shape),
+                'valid_keypoints': int(np.sum(keypoints[:, 2] > 0.1))
+            }
             with open(output_file, 'w') as f:
-                json.dump(output_data, f)
-                
-            debug_print("Procesamiento completado exitosamente")
-                
+                json.dump(out, f)
         except Exception as e:
-            debug_print(f"Error en process_keypoints: {{str(e)}}")
-            debug_print(f"Traceback: {{traceback.format_exc()}}")
-            # Escribir error
             with open(output_file, 'w') as f:
-                json.dump({{'success': False, 'error': str(e), 'traceback': traceback.format_exc()}}, f)
+                json.dump({'success': False, 'error': str(e), 'traceback': traceback.format_exc()}, f)
     
     if __name__ == "__main__":
-        if len(sys.argv) != 3:
-            debug_print("Argumentos incorrectos")
-            print("Uso: python3.6 classifier_worker.py <input_file> <output_file>")
-            sys.exit(1)
-        
-        input_file = sys.argv[1]
-        output_file = sys.argv[2]
-        
-        debug_print(f"Input: {{input_file}}, Output: {{output_file}}")
-        process_keypoints(input_file, output_file)
+        if '--loop' in sys.argv:
+            loop_mode()
+        else:
+            if len(sys.argv) != 3:
+                debug_print("Argumentos incorrectos")
+                print("Uso: python3.6 classifier_worker.py <input_file> <output_file>")
+                sys.exit(1)
+            process_keypoints(sys.argv[1], sys.argv[2])
 
 except ImportError as e:
-    debug_print(f"ImportError: {{str(e)}}")
-    # Error de importación - escribir error
+    debug_print(f"ImportError: {str(e)}")
     with open(sys.argv[2] if len(sys.argv) > 2 else "/tmp/error.json", 'w') as f:
-        json.dump({{'success': False, 'error': f"ImportError: {{str(e)}}", 'traceback': traceback.format_exc()}}, f)
+        json.dump({'success': False, 'error': f"ImportError: {str(e)}", 'traceback': traceback.format_exc()}, f)
 except Exception as e:
-    debug_print(f"Error general: {{str(e)}}")
+    debug_print(f"Error general: {str(e)}")
     with open(sys.argv[2] if len(sys.argv) > 2 else "/tmp/error.json", 'w') as f:
-        json.dump({{'success': False, 'error': str(e), 'traceback': traceback.format_exc()}}, f)
-'''
-        
+        json.dump({'success': False, 'error': str(e), 'traceback': traceback.format_exc()}, f)
+"""
+        script_content = (script_template
+                          .replace("__PY_PATH__", str(Path(__file__).resolve().parent.parent))
+                          .replace("__MODEL_PATH__", self.model_path.replace('"', '\"'))
+                          .replace("__SEQ_LEN__", str(self.sequence_length))
+                          .replace("__CONF_THRESH__", str(self.confidence_threshold)))
         with open(script_path, 'w') as f:
             f.write(script_content)
-        
-        # Hacer ejecutable
         os.chmod(script_path, 0o755)
-        
         return script_path
     
+    def _start_persistent_process(self):
+        """Inicia proceso persistente en modo loop"""
+        if self._worker is not None:
+            return
+        try:
+            logger.info("🚀 Iniciando clasificador persistente Python 3.6...")
+            self._worker = subprocess.Popen(
+                ['python3.6', self.classifier_script, '--loop'],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1
+            )
+            # Hilo para leer stderr y loguear (evita deadlocks)
+            def _stderr_reader(proc):
+                for line in proc.stderr:
+                    line = line.rstrip()
+                    if line:
+                        logger.debug(f"[CLF36] {line}")
+            threading.Thread(target=_stderr_reader, args=(self._worker,), daemon=True).start()
+            logger.info("✅ Clasificador persistente iniciado")
+        except Exception as e:
+            logger.error(f"❌ No se pudo iniciar proceso persistente: {e}")
+            self._worker = None
+ 
     def process_keypoints(self, keypoints: np.ndarray) -> dict:
         """
         Procesa keypoints usando el clasificador en Python 3.6
         """
+        # Ruta optimizada si proceso persistente activo
+        if self._persistent and self._worker and self._worker.stdin and self._worker.poll() is None:
+            try:
+                payload = {'keypoints': keypoints.tolist()}
+                line = json.dumps(payload)
+                t0 = time.time()
+                with self._worker_lock:
+                    self._worker.stdin.write(line + '\n')
+                    self._worker.stdin.flush()
+                    # Leer respuesta (bloqueante). Se podría mejorar con timeout usando hilos.
+                    response = self._worker.stdout.readline()
+                rt_ms = (time.time() - t0) * 1000
+                if not response:
+                    return {'error': True, 'message': 'Empty response from persistent worker'}
+                data = json.loads(response)
+                if data.get('quit'):
+                    return {'error': True, 'message': 'Worker terminating'}
+                if not data.get('success', False):
+                    return {'error': True, 'message': data.get('error', 'Unknown'), 'traceback': data.get('traceback')}
+                classification_result = data.get('result')
+                if classification_result and not classification_result.get('error', False):
+                    self.stats['total_predictions'] += 1
+                    if classification_result.get('confidence', 0) > 0.5:
+                        self.stats['confident_predictions'] += 1
+                    pose_class = classification_result.get('predicted_class', 'unknown')
+                    if pose_class in self.stats['class_predictions']:
+                        self.stats['class_predictions'][pose_class] += 1
+                    classification_result['inference_time_ms'] = classification_result.get('inference_time_ms', rt_ms)
+                return classification_result
+            except Exception as e:
+                logger.error(f"❌ Error en worker persistente: {e}")
+                return {'error': True, 'message': str(e)}
+        # Fallback a modo antiguo (no persistente)
         try:
-            logger.debug(f"🔍 Enviando keypoints al clasificador - forma: {keypoints.shape}")
-            logger.debug(f"🔍 Keypoints válidos enviados: {np.sum(keypoints[:, 2] > 0.1)}")
-            
-            # Guardar keypoints en archivo temporal
-            input_data = {
-                'keypoints': keypoints.tolist(),
-                'timestamp': time.time(),
-                'debug_info': {
-                    'shape': keypoints.shape,
-                    'valid_keypoints': int(np.sum(keypoints[:, 2] > 0.1)),
-                    'mean_confidence': float(np.mean(keypoints[:, 2]))
-                }
-            }
-            
+            logger.debug("⚠️ Usando modo no persistente (fallback)")
             with open(self.input_file, 'w') as f:
-                json.dump(input_data, f)
-            
-            logger.debug(f"🔍 Ejecutando comando: python3.6 {self.classifier_script}")
-            
-            # Ejecutar clasificador en Python 3.6
+                json.dump({'keypoints': keypoints.tolist()}, f)
             cmd = ['python3.6', self.classifier_script, self.input_file, self.output_file]
-            
-            start_time = time.time()
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=30  # Timeout de 30 segundos
-            )
-            subprocess_time = (time.time() - start_time) * 1000
-            logger.debug(f"🔍 Tiempo de subproceso: {subprocess_time:.1f}ms")
-            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
             if result.returncode != 0:
-                logger.error(f"❌ Error ejecutando clasificador Python 3.6: {result.stderr}")
-                logger.error(f"❌ Stdout: {result.stdout}")
                 return {'error': True, 'message': 'Subprocess failed', 'stderr': result.stderr}
-            
-            # Leer resultado
             if os.path.exists(self.output_file):
                 with open(self.output_file, 'r') as f:
-                    output_data = json.load(f)
-                
-                logger.debug(f"🔍 Datos de salida del clasificador: {output_data}")
-                
-                if output_data.get('success', False):
-                    classification_result = output_data.get('result')
-                    
-                    # Actualizar estadísticas locales
+                    data = json.load(f)
+                if data.get('success'):
+                    classification_result = data.get('result')
                     if classification_result and not classification_result.get('error', False):
                         self.stats['total_predictions'] += 1
                         if classification_result.get('confidence', 0) > 0.5:
                             self.stats['confident_predictions'] += 1
-                        
                         pose_class = classification_result.get('predicted_class', 'unknown')
                         if pose_class in self.stats['class_predictions']:
                             self.stats['class_predictions'][pose_class] += 1
-                    
                     return classification_result
-                else:
-                    error_msg = output_data.get('error', 'Unknown')
-                    logger.error(f"❌ Error en clasificador: {error_msg}")
-                    return {'error': True, 'message': error_msg}
-            else:
-                logger.error("❌ Archivo de salida no encontrado")
-                return {'error': True, 'message': 'Output file not found'}
-                
-        except subprocess.TimeoutExpired:
-            logger.error("❌ Timeout ejecutando clasificador Python 3.6")
-            return {'error': True, 'message': 'Subprocess timeout'}
+                return {'error': True, 'message': data.get('error', 'Unknown')}
+            return {'error': True, 'message': 'Output file not found'}
         except Exception as e:
-            logger.error(f"❌ Error procesando keypoints: {e}")
             return {'error': True, 'message': str(e)}
     
     def reset_sequence(self):
@@ -333,6 +364,18 @@ except Exception as e:
         """Limpia archivos temporales (idempotente)"""
         if getattr(self, '_cleaned', False):
             return
+        # Terminar proceso persistente si activo
+        try:
+            if self._persistent and self._worker and self._worker.poll() is None:
+                try:
+                    with self._worker_lock:
+                        self._worker.stdin.write('QUIT\n')
+                        self._worker.stdin.flush()
+                except Exception:
+                    pass
+                self._worker.wait(timeout=5)
+        except Exception as e:
+            logger.warning(f"⚠️ Error terminando worker persistente: {e}")
         try:
             import shutil
             if os.path.isdir(self.temp_dir):
@@ -415,7 +458,9 @@ class MediaPipeWithClassifier:
     def __init__(self, 
                  mediapipe_model_path: str,
                  pose_classifier_model_path: str,
-                 validation_mode: bool = True):
+                 validation_mode: bool = True,
+                 fast_mode: bool = False,
+                 parallel_classification: bool = True):
         """
         Inicializa el sistema completo
         
@@ -423,9 +468,13 @@ class MediaPipeWithClassifier:
             mediapipe_model_path: Ruta al modelo .task de MediaPipe
             pose_classifier_model_path: Ruta al modelo engine del clasificador
             validation_mode: Si activar validación visual de topología
+            fast_mode: Si True, desactiva validación y reduce sobrecarga
+            parallel_classification: Ejecuta clasificación en hilo separado
         """
-        self.validation_mode = validation_mode
-        
+        self.validation_mode = validation_mode and not fast_mode
+        self.fast_mode = fast_mode
+        self.parallel_classification = parallel_classification
+         
         # Crear procesador de MediaPipe Tasks (Python 3.9)
         logger.info("🔧 Inicializando MediaPipe processor (Python 3.9)...")
         self.mediapipe_processor = MediaPipeTasksPoseProcessor(
@@ -439,7 +488,8 @@ class MediaPipeWithClassifier:
         self.pose_classifier = PoseClassifierPython36(
             model_path=pose_classifier_model_path,
             sequence_length=15,  # Secuencia más corta para pruebas
-            confidence_threshold=0.05  # Umbral más bajo
+            confidence_threshold=0.05,  # Umbral más bajo
+            persistent=True
         )
         
         # Estadísticas
@@ -467,12 +517,48 @@ class MediaPipeWithClassifier:
         self._classification_errors = 0
         self._classification_none = 0
         self._video_total_frames = None
-        
+        # Infraestructura para clasificación paralela
+        self._classification_queue = None
+        self._classification_thread = None
+        self._classification_results = {}
+        self._classification_results_lock = threading.Lock()
+        if self.parallel_classification:
+            self._classification_queue = queue.Queue(maxsize=5)
+            self._classification_thread = threading.Thread(target=self._classification_worker, daemon=True)
+            self._classification_thread.start()
+         
         logger.info("✅ Sistema MediaPipe + Clasificador + Validación inicializado")
         logger.info("   🎯 Procesador: MediaPipeTasksPoseProcessor (Python 3.9)")
         logger.info("   🎭 Clasificador: PoseClassifierPython36 (subprocess Python 3.6)")
-        logger.info(f"   🔍 Validación de topología: {'Activada' if validation_mode else 'Desactivada'}")
-        
+        logger.info(f"   🔍 Validación de topología: {'Activada' if self.validation_mode else 'Desactivada'}")
+        logger.info(f"   ⚡ Modo rápido: {'Sí' if self.fast_mode else 'No'} | Paralelo: {'Sí' if self.parallel_classification else 'No'}")
+    
+    def _classification_worker(self):
+        """Hilo consumidor para clasificación asíncrona"""
+        while True:
+            item = self._classification_queue.get()
+            if item is None:
+                break
+            idx, keypoints = item
+            result = self.pose_classifier.process_keypoints(keypoints)
+            with self._classification_results_lock:
+                self._classification_results[idx] = result
+            self._classification_queue.task_done()
+
+    def _enqueue_classification(self, frame_idx: int, keypoints: np.ndarray):
+        if not self.parallel_classification:
+            return None
+        try:
+            self._classification_queue.put_nowait((frame_idx, keypoints))
+        except queue.Full:
+            logger.debug("⚠️ Cola de clasificación llena, descartando frame")
+
+    def _get_classification_result(self, frame_idx: int):
+        if not self.parallel_classification:
+            return None
+        with self._classification_results_lock:
+            return self._classification_results.pop(frame_idx, None)
+    
     def validate_topology_mapping(self, mediapipe_keypoints: np.ndarray) -> dict:
         """
         Valida la conversión de topología MediaPipe a NVIDIA
@@ -631,7 +717,8 @@ class MediaPipeWithClassifier:
         }
         
         start_time = time.time()
-        
+        frame_index = self.stats['frames_processed']  # índice antes de incrementar
+         
         try:
             # Usar MediaPipe Tasks para obtener keypoints
             mediapipe_keypoints = self.mediapipe_processor.process_frame(image)
@@ -660,17 +747,21 @@ class MediaPipeWithClassifier:
                             logger.warning(f"   🔴 {error}")
                 
                 # Clasificar poses (el clasificador internamente convertirá MediaPipe -> NVIDIA)
-                logger.debug("🔍 Enviando keypoints al clasificador Python 3.6...")
-                classification_result = self.pose_classifier.process_keypoints(mediapipe_keypoints)
+                logger.debug("🔍 Preparando clasificación...")
+                if self.parallel_classification:
+                    self._enqueue_classification(frame_index, mediapipe_keypoints)
+                    classification_result = self._get_classification_result(frame_index)  # intentar obtener si ya listo
+                else:
+                    classification_result = self.pose_classifier.process_keypoints(mediapipe_keypoints)
                 logger.debug(f"🔍 Resultado clasificador: {classification_result}")
                 
                 if classification_result and not classification_result.get('error', False):
                     logger.debug(f"✅ Clasificación exitosa: {classification_result.get('predicted_class')} (conf: {classification_result.get('confidence', 0):.3f})")
                     frame_result['pose_classifications'].append({
                         'person_id': 0,
-                        'pose_class': classification_result['predicted_class'],
-                        'confidence': classification_result['confidence'],
-                        'probabilities': classification_result['probabilities'],
+                        'pose_class': classification_result['pose_class'] if 'pose_class' in classification_result else classification_result.get('predicted_class'),
+                        'confidence': classification_result.get('confidence', 0),
+                        'probabilities': classification_result.get('probabilities'),
                         'inference_time_ms': classification_result.get('inference_time_ms', 0)
                     })
                     
@@ -816,9 +907,22 @@ class MediaPipeWithClassifier:
                 
                 t0 = time.time()
                 frame_result = self.process_frame_with_classification_and_validation(frame)
-                if output_path:
-                    if out:
-                        out.write(self.draw_results_with_validation(frame, frame_result))
+                # Recuperar resultados atrasados (paralelo) para frames anteriores si disponibles
+                if self.parallel_classification:
+                    pending_idx = self.stats['frames_processed'] - 1
+                    pending_result = self._get_classification_result(pending_idx)
+                    if pending_result and not frame_result['pose_classifications']:
+                        if not pending_result.get('error'):
+                            frame_result['pose_classifications'].append({
+                                'person_id': 0,
+                                'pose_class': pending_result.get('predicted_class'),
+                                'confidence': pending_result.get('confidence', 0),
+                                'probabilities': pending_result.get('probabilities'),
+                                'inference_time_ms': pending_result.get('inference_time_ms', 0)
+                            })
+                            self.stats['poses_classified'] += 1
+                if output_path and out:
+                    out.write(self.draw_results_with_validation(frame, frame_result))
                 frame_time_ms = (time.time() - t0) * 1000
                 if frame_time_ms > SLOW_FRAME_THRESHOLD_MS:
                     self._slow_frames += 1
@@ -829,6 +933,18 @@ class MediaPipeWithClassifier:
             cap.release()
             if out:
                 out.release()
+            # Vaciar cola de clasificación y esperar hilo
+            if self.parallel_classification and self._classification_queue:
+                try:
+                    self._classification_queue.put_nowait((self.stats['frames_processed'], np.zeros((33,3))))
+                except Exception:
+                    pass
+                try:
+                    self._classification_queue.put(None)
+                except Exception:
+                    pass
+                if self._classification_thread:
+                    self._classification_thread.join(timeout=3)
             self._maybe_log_progress(force=True)
             self._print_final_statistics()
 
@@ -901,24 +1017,30 @@ class MediaPipeWithClassifier:
             print(f"   {class_name}: {count} ({percentage:.1f}%)")
 
     def cleanup(self):
-        if getattr(self, '_cleaned', False):
-            return
-        # Limpieza del clasificador Python 3.6
-        try:
-            if hasattr(self, 'pose_classifier') and self.pose_classifier:
-                self.pose_classifier.cleanup()
-        except Exception as e:
-            logger.warning(f"⚠️ Error limpiando clasificador: {e}")
-        # Limpieza de MediaPipe processor
-        try:
-            if hasattr(self, 'mediapipe_processor'):
-                closer = getattr(self.mediapipe_processor, 'close', None)
-                if callable(closer):
-                    closer()
-        except Exception as e:
-            logger.warning(f"⚠️ Error liberando MediaPipe: {e}")
-        self._cleaned = True
-        logger.info("✅ Sistema completamente limpiado")
+         if getattr(self, '_cleaned', False):
+             return
+         # Limpieza del clasificador Python 3.6
+         try:
+             if hasattr(self, 'pose_classifier') and self.pose_classifier:
+                 self.pose_classifier.cleanup()
+         except Exception as e:
+             logger.warning(f"⚠️ Error limpiando clasificador: {e}")
+         # Parar worker de clasificación paralelo
+         try:
+             if self.parallel_classification and self._classification_queue:
+                 self._classification_queue.put(None)
+         except Exception:
+             pass
+         # Limpieza de MediaPipe processor
+         try:
+             if hasattr(self, 'mediapipe_processor'):
+                 closer = getattr(self.mediapipe_processor, 'close', None)
+                 if callable(closer):
+                     closer()
+         except Exception as e:
+             logger.warning(f"⚠️ Error liberando MediaPipe: {e}")
+         self._cleaned = True
+         logger.info("✅ Sistema completamente limpiado")
     
     def __del__(self):
         """Destructor"""
@@ -952,7 +1074,9 @@ def main():
         system = MediaPipeWithClassifier(
             mediapipe_model_path=config['mediapipe_model'],
             pose_classifier_model_path=config['pose_classifier_model'],
-            validation_mode=True  # ✅ Activar validación por defecto
+            validation_mode=True,
+            fast_mode=False,            # Cambiar a True para máxima velocidad (desactiva validación)
+            parallel_classification=True  # Clasificación en hilo separado
         )
         
         # Procesar video
