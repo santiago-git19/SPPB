@@ -259,7 +259,8 @@ except Exception as e:
             self._worker = subprocess.Popen(
                 ['python3.6', self.classifier_script, '--loop'],
                 stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
+                stdout=sys.stdout,  # Redirigir stdout a la terminal principal
+                #stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
                 bufsize=1
