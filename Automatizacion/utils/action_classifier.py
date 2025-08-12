@@ -404,38 +404,31 @@ class TRTPoseClassifier:
     
     def _normalize_keypoints(self, keypoints: np.ndarray) -> np.ndarray:
         """
-        Normaliza las coordenadas de keypoints
-        
+        Normaliza las coordenadas de keypoints entre 0 y 1
+
         Args:
             keypoints: Array [num_keypoints, 3]
-            
+
         Returns:
             Array normalizado
         """
         normalized = keypoints.copy()
-        
+
         # Filtrar keypoints válidos (no cero)
         valid_mask = (keypoints[:, 0] != 0) | (keypoints[:, 1] != 0)
-        
+
         if np.any(valid_mask):
             valid_keypoints = keypoints[valid_mask]
-            
-            # Normalizar coordenadas X e Y por separado
-            if len(valid_keypoints) > 0:
-                x_coords = valid_keypoints[:, 0]
-                y_coords = valid_keypoints[:, 1]
-                
-                # Centrar y escalar (normalización básica)
-                if np.max(x_coords) > np.min(x_coords):
-                    x_center = np.mean(x_coords)
-                    x_scale = np.max(x_coords) - np.min(x_coords)
-                    normalized[valid_mask, 0] = (x_coords - x_center) / x_scale
-                
-                if np.max(y_coords) > np.min(y_coords):
-                    y_center = np.mean(y_coords)
-                    y_scale = np.max(y_coords) - np.min(y_coords)
-                    normalized[valid_mask, 1] = (y_coords - y_center) / y_scale
-        
+
+            # Normalizar coordenadas X e Y al rango [0, 1]
+            min_x, max_x = np.min(valid_keypoints[:, 0]), np.max(valid_keypoints[:, 0])
+            min_y, max_y = np.min(valid_keypoints[:, 1]), np.max(valid_keypoints[:, 1])
+
+            if max_x > min_x:  # Evitar división por cero
+                normalized[valid_mask, 0] = (valid_keypoints[:, 0] - min_x) / (max_x - min_x)
+            if max_y > min_y:
+                normalized[valid_mask, 1] = (valid_keypoints[:, 1] - min_y) / (max_y - min_y)
+
         return normalized
 
     def _adjust_keypoint_confidence(self, keypoints: np.ndarray, 
@@ -548,9 +541,7 @@ class TRTPoseClassifier:
         """
         try:
             # Convertir a numpy array si es necesario
-            if isinstance(keypoints, tuple):
-                keypoints = np.array(keypoints)
-            elif isinstance(keypoints, list):
+            if isinstance(keypoints, (tuple, list)):
                 keypoints = np.array(keypoints)
             
             # Asegurar formato correcto
