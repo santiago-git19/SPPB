@@ -30,7 +30,7 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 # Importar procesador existente de trt_pose y nuestro clasificador
 from utils.trt_pose_proc import TRTPoseProcessor
-from Automatizacion.utils.action_classifier import TRTPoseClassifier, create_pose_classifier
+from utils.action_classifier import TRTPoseClassifier, create_pose_classifier
 
 
 # Configurar logging
