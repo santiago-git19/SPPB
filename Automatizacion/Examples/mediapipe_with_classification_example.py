@@ -107,11 +107,14 @@ class PoseClassifierPython36:
                 
                 # Prueba básica de importación
                 test_script = f'''
+print("holaaa")
 import sys
 import os
 sys.path.append("{str(Path(__file__).resolve().parent.parent)}")
 try:
+    print("hola 1")
     from utils.action_classifier import create_pose_classifier
+    print("hola 2")
     print("SUCCESS: action_classifier importado correctamente")
 except ImportError as e:
     print(f"ERROR: No se pudo importar action_classifier: {{e}}")
