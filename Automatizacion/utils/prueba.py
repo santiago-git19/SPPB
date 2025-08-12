@@ -6,24 +6,26 @@ import numpy as np
 
 
 def draw_landmarks_on_image(rgb_image, detection_result):
-  pose_landmarks_list = detection_result.pose_landmarks
-  annotated_image = np.copy(rgb_image)
+    pose_landmarks_list = detection_result.pose_landmarks
+    # Convert RGB to BGR for drawing_utils
+    bgr_image = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR)
+    annotated_image = np.copy(bgr_image)
 
-  # Loop through the detected poses to visualize.
-  for idx in range(len(pose_landmarks_list)):
-    pose_landmarks = pose_landmarks_list[idx]
+    # Loop through the detected poses to visualize.
+    for idx in range(len(pose_landmarks_list)):
+        pose_landmarks = pose_landmarks_list[idx]
 
-    # Draw the pose landmarks.
-    pose_landmarks_proto = landmark_pb2.NormalizedLandmarkList()
-    pose_landmarks_proto.landmark.extend([
-      landmark_pb2.NormalizedLandmark(x=landmark.x, y=landmark.y, z=landmark.z) for landmark in pose_landmarks
-    ])
-    solutions.drawing_utils.draw_landmarks(
-      annotated_image,
-      pose_landmarks_proto,
-      solutions.pose.POSE_CONNECTIONS,
-      solutions.drawing_styles.get_default_pose_landmarks_style())
-  return annotated_image
+        # Draw the pose landmarks.
+        pose_landmarks_proto = landmark_pb2.NormalizedLandmarkList()
+        pose_landmarks_proto.landmark.extend([
+            landmark_pb2.NormalizedLandmark(x=landmark.x, y=landmark.y, z=landmark.z) for landmark in pose_landmarks
+        ])
+        solutions.drawing_utils.draw_landmarks(
+            annotated_image,
+            pose_landmarks_proto,
+            solutions.pose.POSE_CONNECTIONS,
+            solutions.drawing_styles.get_default_pose_landmarks_style())
+    return annotated_image
 
 import cv2
 
@@ -47,11 +49,12 @@ image = mp.Image.create_from_file("persona.PNG")
 # STEP 4: Detect pose landmarks from the input image.
 detection_result = detector.detect(image)
 
+
 # STEP 5: Process the detection result. In this case, visualize it.
 annotated_image = draw_landmarks_on_image(image.numpy_view(), detection_result)
 
-# Guardar la imagen procesada
-cv2.imwrite('pose_output_task.png', cv2.cvtColor(annotated_image, cv2.COLOR_RGB2BGR))
+# Guardar la imagen procesada (ya está en BGR)
+cv2.imwrite('pose_output_task.png', annotated_image)
 print("✅ Imagen procesada guardada en: pose_output_task.png")
 
 segmentation_mask = detection_result.segmentation_masks[0].numpy_view()
