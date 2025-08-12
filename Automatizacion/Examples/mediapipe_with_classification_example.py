@@ -25,12 +25,11 @@ import numpy as np
 import time
 import logging
 from pathlib import Path
-import matplotlib.pyplot as plt
+# Eliminado matplotlib (headless)
 import json
 import subprocess
 import tempfile
 import os
-
 import sys
 from pathlib import Path
 # Añadir el directorio 'Automatizacion' al sys.path
@@ -42,6 +41,11 @@ from utils.prueba import MediaPipeTasksPoseProcessor
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Constantes de verbosidad
+LOG_EVERY_N_FRAMES = 10
+LOG_EVERY_SECONDS = 5.0
+SLOW_FRAME_THRESHOLD_MS = 150.0
 
 class PoseClassifierPython36:
     """
@@ -236,13 +240,17 @@ except ImportError as e:
         }
     
     def cleanup(self):
-        """Limpia archivos temporales"""
+        """Limpia archivos temporales (idempotente)"""
+        if getattr(self, '_cleaned', False):
+            return
         try:
             import shutil
-            shutil.rmtree(self.temp_dir)
-            logger.info("✅ Archivos temporales del clasificador limpiados")
+            if os.path.isdir(self.temp_dir):
+                shutil.rmtree(self.temp_dir, ignore_errors=True)
+                logger.info("✅ Archivos temporales del clasificador limpiados")
         except Exception as e:
             logger.warning(f"⚠️ Error limpiando archivos temporales: {e}")
+        self._cleaned = True
     
     def __del__(self):
         """Destructor"""
@@ -360,6 +368,15 @@ class MediaPipeWithClassifier:
             'nvidia_keypoints_history': [],
             'mapping_validation_results': []
         }
+        
+        # Progreso y métricas
+        self._start_time = self.stats['start_time']
+        self._last_log_time = self._start_time
+        self._last_log_frame = 0
+        self._slow_frames = 0
+        self._classification_errors = 0
+        self._classification_none = 0
+        self._video_total_frames = None
         
         logger.info("✅ Sistema MediaPipe + Clasificador + Validación inicializado")
         logger.info("   🎯 Procesador: MediaPipeTasksPoseProcessor (Python 3.9)")
@@ -480,6 +497,36 @@ class MediaPipeWithClassifier:
         
         return validation_result
     
+    def _progress_metrics(self):
+        frames = self.stats['frames_processed']
+        elapsed = max(time.time() - self._start_time, 1e-6)
+        avg_fps = frames / elapsed
+        if self._video_total_frames:
+            percent = (frames / self._video_total_frames) * 100.0
+            remaining = max(self._video_total_frames - frames, 0)
+            eta = remaining / avg_fps if avg_fps > 0 else -1
+        else:
+            percent, eta = None, -1
+        return avg_fps, percent, eta
+
+    def _maybe_log_progress(self, force=False):
+        frames = self.stats['frames_processed']
+        if frames == 0:
+            return
+        now = time.time()
+        if not force:
+            if frames - self._last_log_frame < LOG_EVERY_N_FRAMES and (now - self._last_log_time) < LOG_EVERY_SECONDS:
+                return
+        avg_fps, percent, eta = self._progress_metrics()
+        msg = [f"Frames={frames}", f"AvgFPS={avg_fps:.2f}", f"Det={self.stats['poses_detected']}", f"Cls={self.stats['poses_classified']}", f"ClsErr={self._classification_errors}", f"ClsNone={self._classification_none}", f"Slow={self._slow_frames}"]
+        if percent is not None:
+            msg.append(f"{percent:.1f}%")
+        if eta >= 0:
+            msg.append(f"ETA={eta/60:.1f}m")
+        logger.info("PROGRESO: " + " | ".join(msg))
+        self._last_log_frame = frames
+        self._last_log_time = now
+
     def process_frame_with_classification_and_validation(self, image: np.ndarray) -> dict:
         """
         Procesa un frame completo: detección + validación + clasificación
@@ -517,7 +564,6 @@ class MediaPipeWithClassifier:
                 
                 # Clasificar poses (el clasificador internamente convertirá MediaPipe -> NVIDIA)
                 classification_result = self.pose_classifier.process_keypoints(mediapipe_keypoints)
-                
                 if classification_result and not classification_result.get('error', False):
                     frame_result['pose_classifications'].append({
                         'person_id': 0,
@@ -528,6 +574,12 @@ class MediaPipeWithClassifier:
                     })
                     
                     self.stats['poses_classified'] += 1
+                else:
+                    if classification_result and classification_result.get('error'):
+                        self._classification_errors += 1
+                        logger.debug(f"Error clasificación: {classification_result}")
+                    else:
+                        self._classification_none += 1
                 
                 self.stats['poses_detected'] += 1
             
@@ -537,6 +589,7 @@ class MediaPipeWithClassifier:
         finally:
             frame_result['processing_time_ms'] = (time.time() - start_time) * 1000
             self.stats['frames_processed'] += 1
+            self._maybe_log_progress()
         
         return frame_result
     
@@ -641,35 +694,33 @@ class MediaPipeWithClassifier:
             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
         
-        logger.info("🎥 Iniciando procesamiento MediaPipe + Validación + Clasificación...")
-        
+        logger.info("📄 Total frames desconocido (stream)")
+        logger.info("🎥 Iniciando procesamiento MediaPipe + Validación + Clasificación (headless)...")
         try:
             while True:
                 ret, frame = cap.read()
                 if not ret:
+                    logger.info("🔚 Fin del video o stream")
                     break
                 
-                # Procesar frame con validación y clasificación
+                t0 = time.time()
                 frame_result = self.process_frame_with_classification_and_validation(frame)
-                
-                # Dibujar resultados
-                result_frame = self.draw_results_with_validation(frame, frame_result)
-                
-                # Guardar si se especifica
-                if out:
-                    out.write(result_frame)
-                
+                if output_path:
+                    if out:
+                        out.write(self.draw_results_with_validation(frame, frame_result))
+                frame_time_ms = (time.time() - t0) * 1000
+                if frame_time_ms > SLOW_FRAME_THRESHOLD_MS:
+                    self._slow_frames += 1
+                self._maybe_log_progress()
         except KeyboardInterrupt:
-            logger.info("⚠️ Procesamiento interrumpido")
-        
+            logger.info("⚠️ Procesamiento interrumpido por usuario")
         finally:
             cap.release()
             if out:
                 out.release()
-            
-            # Mostrar estadísticas finales
+            self._maybe_log_progress(force=True)
             self._print_final_statistics()
-    
+
     def save_validation_report(self):
         """Guarda un reporte detallado de validación"""
         try:
@@ -739,19 +790,24 @@ class MediaPipeWithClassifier:
             print(f"   {class_name}: {count} ({percentage:.1f}%)")
 
     def cleanup(self):
-        """Limpieza del sistema completo"""
+        if getattr(self, '_cleaned', False):
+            return
+        # Limpieza del clasificador Python 3.6
         try:
-            # Limpiar clasificador Python 3.6
-            if hasattr(self, 'pose_classifier'):
+            if hasattr(self, 'pose_classifier') and self.pose_classifier:
                 self.pose_classifier.cleanup()
-            
-            # Limpiar MediaPipe processor
-            if hasattr(self, 'mediapipe_processor'):
-                self.mediapipe_processor.close()
-            
-            logger.info("✅ Sistema completamente limpiado")
         except Exception as e:
-            logger.warning(f"⚠️ Error en cleanup: {e}")
+            logger.warning(f"⚠️ Error limpiando clasificador: {e}")
+        # Limpieza de MediaPipe processor
+        try:
+            if hasattr(self, 'mediapipe_processor'):
+                closer = getattr(self.mediapipe_processor, 'close', None)
+                if callable(closer):
+                    closer()
+        except Exception as e:
+            logger.warning(f"⚠️ Error liberando MediaPipe: {e}")
+        self._cleaned = True
+        logger.info("✅ Sistema completamente limpiado")
     
     def __del__(self):
         """Destructor"""
