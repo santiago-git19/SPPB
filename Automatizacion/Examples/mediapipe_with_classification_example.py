@@ -38,8 +38,8 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 # Importar solo MediaPipe Tasks (Python 3.9)
 from utils.prueba import MediaPipeTasksPoseProcessor
 
-# Configurar logging
-logging.basicConfig(level=logging.INFO)
+# Configurar logging más detallado para debugging
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # Constantes de verbosidad
@@ -81,6 +81,49 @@ class PoseClassifierPython36:
         logger.info("✅ PoseClassifierPython36 inicializado (Python 3.6 subprocess)")
         logger.info(f"   📁 Modelo: {os.path.basename(model_path)}")
         logger.info(f"   📂 Temp dir: {self.temp_dir}")
+        
+        # Verificar que Python 3.6 esté disponible
+        self._test_python36_availability()
+    
+    def _test_python36_availability(self):
+        """Verifica que Python 3.6 esté disponible y funcional"""
+        try:
+            logger.info("🔍 Verificando disponibilidad de Python 3.6...")
+            result = subprocess.run(['python3.6', '--version'], 
+                                  capture_output=True, text=True, timeout=10)
+            if result.returncode == 0:
+                logger.info(f"✅ Python 3.6 disponible: {result.stdout.strip()}")
+                
+                # Prueba básica de importación
+                test_script = f'''
+import sys
+import os
+sys.path.append("{str(Path(__file__).resolve().parent.parent)}")
+try:
+    from utils.action_classifier import create_pose_classifier
+    print("SUCCESS: action_classifier importado correctamente")
+except ImportError as e:
+    print(f"ERROR: No se pudo importar action_classifier: {{e}}")
+    sys.exit(1)
+'''
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+                    f.write(test_script)
+                    test_file = f.name
+                
+                try:
+                    result = subprocess.run(['python3.6', test_file], 
+                                          capture_output=True, text=True, timeout=15)
+                    if result.returncode == 0 and "SUCCESS" in result.stdout:
+                        logger.info("✅ action_classifier disponible en Python 3.6")
+                    else:
+                        logger.error(f"❌ Error importando action_classifier: {result.stderr}")
+                        logger.error(f"❌ Stdout: {result.stdout}")
+                finally:
+                    os.unlink(test_file)
+            else:
+                logger.error(f"❌ Python 3.6 no disponible: {result.stderr}")
+        except Exception as e:
+            logger.error(f"❌ Error verificando Python 3.6: {e}")
     
     def _create_classifier_script(self) -> str:
         """Crea el script de clasificación para Python 3.6"""
@@ -91,14 +134,22 @@ import json
 import sys
 import os
 import numpy as np
+import traceback
 
 # Añadir path
 sys.path.append("{str(Path(__file__).resolve().parent.parent)}")
 
+def debug_print(msg):
+    """Debug helper"""
+    print(f"[DEBUG CLASSIFIER] {{msg}}", file=sys.stderr)
+
 try:
+    debug_print("Iniciando importación del clasificador...")
     from utils.action_classifier import create_pose_classifier
+    debug_print("Importación exitosa")
     
     # Crear clasificador
+    debug_print("Creando clasificador...")
     classifier = create_pose_classifier(
         model_path="{self.model_path}",
         input_keypoint_format='mediapipe',
@@ -106,47 +157,69 @@ try:
         sequence_length={self.sequence_length},
         confidence_threshold={self.confidence_threshold}
     )
+    debug_print("Clasificador creado exitosamente")
     
     def process_keypoints(input_file, output_file):
         try:
+            debug_print(f"Procesando archivo: {{input_file}}")
+            
             # Leer keypoints del archivo
             with open(input_file, 'r') as f:
                 data = json.load(f)
             
             keypoints = np.array(data['keypoints'])
+            debug_print(f"Keypoints shape: {{keypoints.shape}}")
+            debug_print(f"Keypoints válidos: {{np.sum(keypoints[:, 2] > 0.1)}}")
             
             # Procesar con el clasificador
+            debug_print("Procesando con clasificador...")
             result = classifier.process_keypoints(keypoints)
+            debug_print(f"Resultado: {{result}}")
             
             # Escribir resultado
             output_data = {{
                 'success': True,
-                'result': result if result else {{'error': True}},
-                'stats': classifier.get_statistics()
+                'result': result if result else {{'error': True, 'message': 'Classifier returned None'}},
+                'stats': classifier.get_statistics() if hasattr(classifier, 'get_statistics') else {{}},
+                'debug_info': {{
+                    'keypoints_received': keypoints.shape,
+                    'valid_keypoints': int(np.sum(keypoints[:, 2] > 0.1))
+                }}
             }}
             
             with open(output_file, 'w') as f:
                 json.dump(output_data, f)
                 
+            debug_print("Procesamiento completado exitosamente")
+                
         except Exception as e:
+            debug_print(f"Error en process_keypoints: {{str(e)}}")
+            debug_print(f"Traceback: {{traceback.format_exc()}}")
             # Escribir error
             with open(output_file, 'w') as f:
-                json.dump({{'success': False, 'error': str(e)}}, f)
+                json.dump({{'success': False, 'error': str(e), 'traceback': traceback.format_exc()}}, f)
     
     if __name__ == "__main__":
         if len(sys.argv) != 3:
+            debug_print("Argumentos incorrectos")
             print("Uso: python3.6 classifier_worker.py <input_file> <output_file>")
             sys.exit(1)
         
         input_file = sys.argv[1]
         output_file = sys.argv[2]
         
+        debug_print(f"Input: {{input_file}}, Output: {{output_file}}")
         process_keypoints(input_file, output_file)
 
 except ImportError as e:
+    debug_print(f"ImportError: {{str(e)}}")
     # Error de importación - escribir error
     with open(sys.argv[2] if len(sys.argv) > 2 else "/tmp/error.json", 'w') as f:
-        json.dump({{'success': False, 'error': f"ImportError: {{str(e)}}"}}, f)
+        json.dump({{'success': False, 'error': f"ImportError: {{str(e)}}", 'traceback': traceback.format_exc()}}, f)
+except Exception as e:
+    debug_print(f"Error general: {{str(e)}}")
+    with open(sys.argv[2] if len(sys.argv) > 2 else "/tmp/error.json", 'w') as f:
+        json.dump({{'success': False, 'error': str(e), 'traceback': traceback.format_exc()}}, f)
 '''
         
         with open(script_path, 'w') as f:
@@ -162,33 +235,49 @@ except ImportError as e:
         Procesa keypoints usando el clasificador en Python 3.6
         """
         try:
+            logger.debug(f"🔍 Enviando keypoints al clasificador - forma: {keypoints.shape}")
+            logger.debug(f"🔍 Keypoints válidos enviados: {np.sum(keypoints[:, 2] > 0.1)}")
+            
             # Guardar keypoints en archivo temporal
             input_data = {
                 'keypoints': keypoints.tolist(),
-                'timestamp': time.time()
+                'timestamp': time.time(),
+                'debug_info': {
+                    'shape': keypoints.shape,
+                    'valid_keypoints': int(np.sum(keypoints[:, 2] > 0.1)),
+                    'mean_confidence': float(np.mean(keypoints[:, 2]))
+                }
             }
             
             with open(self.input_file, 'w') as f:
                 json.dump(input_data, f)
             
+            logger.debug(f"🔍 Ejecutando comando: python3.6 {self.classifier_script}")
+            
             # Ejecutar clasificador en Python 3.6
             cmd = ['python3.6', self.classifier_script, self.input_file, self.output_file]
             
+            start_time = time.time()
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
                 timeout=30  # Timeout de 30 segundos
             )
+            subprocess_time = (time.time() - start_time) * 1000
+            logger.debug(f"🔍 Tiempo de subproceso: {subprocess_time:.1f}ms")
             
             if result.returncode != 0:
                 logger.error(f"❌ Error ejecutando clasificador Python 3.6: {result.stderr}")
-                return {'error': True, 'message': 'Subprocess failed'}
+                logger.error(f"❌ Stdout: {result.stdout}")
+                return {'error': True, 'message': 'Subprocess failed', 'stderr': result.stderr}
             
             # Leer resultado
             if os.path.exists(self.output_file):
                 with open(self.output_file, 'r') as f:
                     output_data = json.load(f)
+                
+                logger.debug(f"🔍 Datos de salida del clasificador: {output_data}")
                 
                 if output_data.get('success', False):
                     classification_result = output_data.get('result')
@@ -205,8 +294,9 @@ except ImportError as e:
                     
                     return classification_result
                 else:
-                    logger.error(f"❌ Error en clasificador: {output_data.get('error', 'Unknown')}")
-                    return {'error': True, 'message': output_data.get('error', 'Unknown')}
+                    error_msg = output_data.get('error', 'Unknown')
+                    logger.error(f"❌ Error en clasificador: {error_msg}")
+                    return {'error': True, 'message': error_msg}
             else:
                 logger.error("❌ Archivo de salida no encontrado")
                 return {'error': True, 'message': 'Output file not found'}
@@ -340,16 +430,16 @@ class MediaPipeWithClassifier:
         logger.info("🔧 Inicializando MediaPipe processor (Python 3.9)...")
         self.mediapipe_processor = MediaPipeTasksPoseProcessor(
             model_path=mediapipe_model_path,
-            confidence_threshold=0.3,
-            debug=False
+            confidence_threshold=0.1,  # Reducido para capturar más keypoints
+            debug=True  # Activar debug
         )
         
         # Crear clasificador de poses con wrapper Python 3.6
         logger.info("🔧 Inicializando clasificador de poses (Python 3.6 subprocess)...")
         self.pose_classifier = PoseClassifierPython36(
             model_path=pose_classifier_model_path,
-            sequence_length=30,
-            confidence_threshold=0.2
+            sequence_length=15,  # Secuencia más corta para pruebas
+            confidence_threshold=0.05  # Umbral más bajo
         )
         
         # Estadísticas
@@ -545,8 +635,13 @@ class MediaPipeWithClassifier:
         try:
             # Usar MediaPipe Tasks para obtener keypoints
             mediapipe_keypoints = self.mediapipe_processor.process_frame(image)
+            logger.debug(f"🔍 MediaPipe keypoints detectados: {mediapipe_keypoints is not None}")
             
             if mediapipe_keypoints is not None and isinstance(mediapipe_keypoints, np.ndarray):
+                logger.debug(f"🔍 Forma de keypoints: {mediapipe_keypoints.shape}")
+                logger.debug(f"🔍 Confianza promedio: {np.mean(mediapipe_keypoints[:, 2]):.3f}")
+                logger.debug(f"🔍 Keypoints válidos (>0.1): {np.sum(mediapipe_keypoints[:, 2] > 0.1)}/33")
+                
                 frame_result['people_detected'] = 1
                 frame_result['mediapipe_keypoints'] = mediapipe_keypoints
                 frame_result['has_pose'] = True
@@ -555,6 +650,8 @@ class MediaPipeWithClassifier:
                 if self.validation_mode:
                     validation_result = self.validate_topology_mapping(mediapipe_keypoints)
                     frame_result['validation_result'] = validation_result
+                    logger.debug(f"🔍 Validación topología - válida: {validation_result['is_valid']}")
+                    logger.debug(f"🔍 Keypoints mapeados: {validation_result['mapped_keypoints_count']}/33")
                     
                     # Log errores críticos
                     if not validation_result['is_valid']:
@@ -563,8 +660,12 @@ class MediaPipeWithClassifier:
                             logger.warning(f"   🔴 {error}")
                 
                 # Clasificar poses (el clasificador internamente convertirá MediaPipe -> NVIDIA)
+                logger.debug("🔍 Enviando keypoints al clasificador Python 3.6...")
                 classification_result = self.pose_classifier.process_keypoints(mediapipe_keypoints)
+                logger.debug(f"🔍 Resultado clasificador: {classification_result}")
+                
                 if classification_result and not classification_result.get('error', False):
+                    logger.debug(f"✅ Clasificación exitosa: {classification_result.get('predicted_class')} (conf: {classification_result.get('confidence', 0):.3f})")
                     frame_result['pose_classifications'].append({
                         'person_id': 0,
                         'pose_class': classification_result['predicted_class'],
@@ -577,11 +678,14 @@ class MediaPipeWithClassifier:
                 else:
                     if classification_result and classification_result.get('error'):
                         self._classification_errors += 1
-                        logger.debug(f"Error clasificación: {classification_result}")
+                        logger.warning(f"❌ Error en clasificación: {classification_result.get('message', 'Unknown')}")
                     else:
                         self._classification_none += 1
+                        logger.warning("❌ Clasificador retornó None")
                 
                 self.stats['poses_detected'] += 1
+            else:
+                logger.debug("🔍 No se detectaron keypoints válidos en este frame")
             
         except Exception as e:
             logger.error(f"❌ Error procesando frame: {e}")
@@ -694,7 +798,14 @@ class MediaPipeWithClassifier:
             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
         
-        logger.info("📄 Total frames desconocido (stream)")
+        # Detectar total frames si es archivo
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        if total_frames > 0 and total_frames < 10_000_000:
+            self._video_total_frames = total_frames
+            logger.info(f"📄 Total frames detectados: {total_frames}")
+        else:
+            logger.info("📄 Total frames desconocido (stream o cámara)")
+        
         logger.info("🎥 Iniciando procesamiento MediaPipe + Validación + Clasificación (headless)...")
         try:
             while True:
