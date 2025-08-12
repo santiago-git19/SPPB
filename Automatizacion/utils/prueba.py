@@ -1,59 +1,58 @@
-import cv2
+#@markdown To better demonstrate the Pose Landmarker API, we have created a set of visualization tools that will be used in this colab. These will draw the landmarks on a detect person, as well as the expected connections between those markers.
+
+from mediapipe import solutions
+from mediapipe.framework.formats import landmark_pb2
 import numpy as np
+
+
+def draw_landmarks_on_image(rgb_image, detection_result):
+  pose_landmarks_list = detection_result.pose_landmarks
+  annotated_image = np.copy(rgb_image)
+
+  # Loop through the detected poses to visualize.
+  for idx in range(len(pose_landmarks_list)):
+    pose_landmarks = pose_landmarks_list[idx]
+
+    # Draw the pose landmarks.
+    pose_landmarks_proto = landmark_pb2.NormalizedLandmarkList()
+    pose_landmarks_proto.landmark.extend([
+      landmark_pb2.NormalizedLandmark(x=landmark.x, y=landmark.y, z=landmark.z) for landmark in pose_landmarks
+    ])
+    solutions.drawing_utils.draw_landmarks(
+      annotated_image,
+      pose_landmarks_proto,
+      solutions.pose.POSE_CONNECTIONS,
+      solutions.drawing_styles.get_default_pose_landmarks_style())
+  return annotated_image
+
+import cv2
+
+img = cv2.imread("persona.PNG")
+
+# STEP 1: Import the necessary modules.
 import mediapipe as mp
-from mediapipe.tasks import python as mp_tasks
-from mediapipe.tasks.python import vision as mp_vision
-from mediapipe.tasks.python.vision.core.vision_task_running_mode import VisionRunningMode
-import os
+from mediapipe.tasks import python
+from mediapipe.tasks.python import vision
 
-# --- Configuración ---
-MODEL_PATH = '../models/pose_landmarker_lite.task'
-IMAGE_PATH = 'persona.PNG'
-OUTPUT_PATH = 'pose_output_task.png'
+# STEP 2: Create an PoseLandmarker object.
+base_options = python.BaseOptions(model_asset_path='../models/pose_landmarker.task')
+options = vision.PoseLandmarkerOptions(
+    base_options=base_options,
+    output_segmentation_masks=True)
+detector = vision.PoseLandmarker.create_from_options(options)
 
-# --- Cargar imagen ---
-img = cv2.imread(IMAGE_PATH)
-if img is None:
-    print("❌ Error: No se pudo cargar la imagen. Verifica la ruta del archivo.")
-    exit(1)
-img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+# STEP 3: Load the input image.
+image = mp.Image.create_from_file("persona.PNG")
 
-# --- Crear pose landmarker ---
-BaseOptions = mp_tasks.BaseOptions
-VisionRunningMode = mp_vision.VisionRunningMode
-PoseLandmarker = mp_vision.PoseLandmarker
-PoseLandmarkerResult = mp_vision.PoseLandmarkerResult
+# STEP 4: Detect pose landmarks from the input image.
+detection_result = detector.detect(image)
 
-options = mp_vision.PoseLandmarkerOptions(
-    base_options=BaseOptions(model_asset_path=MODEL_PATH),
-    running_mode=VisionRunningMode.IMAGE,
-    num_poses=1
-)
+# STEP 5: Process the detection result. In this case, visualize it.
+annotated_image = draw_landmarks_on_image(image.numpy_view(), detection_result)
 
-with PoseLandmarker.create_from_options(options) as landmarker:
-    mp_image = mp_vision.MpImage(image_format=mp_vision.ImageFormat.SRGB, data=img_rgb)
-    result = landmarker.detect(mp_image)
+# Guardar la imagen procesada
+cv2.imwrite('pose_output_task.png', cv2.cvtColor(annotated_image, cv2.COLOR_RGB2BGR))
+print("✅ Imagen procesada guardada en: pose_output_task.png")
 
-    if not result.pose_landmarks:
-        print("❌ No se detectaron keypoints.")
-        exit(1)
-
-    # Dibujar keypoints y conexiones
-    annotated = img.copy()
-    for pose in result.pose_landmarks:
-        for x, y, z in pose:
-            px = int(x * img.shape[1])
-            py = int(y * img.shape[0])
-            cv2.circle(annotated, (px, py), 4, (255,255,255), -1)
-        # Conexiones
-        for pt1, pt2 in mp.solutions.pose.POSE_CONNECTIONS:
-            x1, y1, _ = pose[pt1]
-            x2, y2, _ = pose[pt2]
-            px1 = int(x1 * img.shape[1])
-            py1 = int(y1 * img.shape[0])
-            px2 = int(x2 * img.shape[1])
-            py2 = int(y2 * img.shape[0])
-            cv2.line(annotated, (px1, py1), (px2, py2), (0,0,255), 2)
-
-    cv2.imwrite(OUTPUT_PATH, annotated)
-    print(f"✅ Imagen procesada guardada en: {OUTPUT_PATH}")
+segmentation_mask = detection_result.segmentation_masks[0].numpy_view()
+visualized_mask = np.repeat(segmentation_mask[:, :, np.newaxis], 3, axis=2) * 255
