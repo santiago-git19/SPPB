@@ -3,7 +3,7 @@ import numpy as np
 import mediapipe as mp
 from mediapipe.tasks import python as mp_tasks
 from mediapipe.tasks.python import vision as mp_vision
-import mediapipe.tasks as mp_tasks_root
+from mediapipe.tasks.python.vision.core.vision_task_running_mode import VisionRunningMode
 import os
 
 # --- Configuración ---
