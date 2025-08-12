@@ -376,6 +376,10 @@ class TRTPoseClassifier:
         if (left_hip[2] > 0 and right_hip[2] > 0):  # Verificar confianza > 0
             target_keypoints[0] = (left_hip + right_hip) / 2.0  # hips = promedio de caderas
         
+        # Si hip y neck están disponibles, calcular torso como promedio
+        if (target_keypoints[0][2] > 0 and target_keypoints[6][2] > 0):  # Verificar confianza > 0
+            target_keypoints[3] = (target_keypoints[0] + target_keypoints[6]) / 2.0  # torso = promedio de hips y neck
+        
         logger.debug(f"🔄 MediaPipe->NVIDIA: {keypoints.shape} -> {target_keypoints.shape}")
         
         return target_keypoints
