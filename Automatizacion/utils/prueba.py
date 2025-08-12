@@ -592,6 +592,15 @@ if __name__ == "__main__":
         # Estadísticas de rendimiento
         total_process_time = 0.0
         
+        # Detectar si hay display disponible (para evitar errores en entornos headless)
+        try:
+            cv2.namedWindow("test", cv2.WINDOW_NORMAL)
+            cv2.destroyWindow("test")
+            has_display = True
+        except cv2.error:
+            has_display = False
+            print("ℹ️ Modo headless detectado (sin display) - la ventana no se mostrará")
+        
         try:
             while True:
                 if not paused:
@@ -662,22 +671,28 @@ if __name__ == "__main__":
                     # Guardar frame en video de salida
                     out.write(display_frame)
                     
-                    # Mostrar frame (opcional para videos, comentar si no se necesita)
-                    cv2.imshow("MediaPipe Tasks Pose Processing", display_frame)
+                    # Mostrar frame solo si hay display disponible
+                    if has_display:
+                        cv2.imshow("MediaPipe Tasks Pose Processing", display_frame)
                 
-                # Controles de teclado
-                key = cv2.waitKey(1) & 0xFF
-                if key == ord('q'):
-                    print("\n🛑 Procesamiento interrumpido por el usuario")
-                    break
-                elif key == ord('p'):  # Pausar/reanudar
-                    paused = not paused
-                    status = "pausado" if paused else "reanudado"
-                    print(f"⏸️ Procesamiento {status}")
-                elif key == ord('s') and keypoints is not None:  # Guardar frame actual
-                    frame_filename = f"frame_{frame_count:06d}.png"
-                    cv2.imwrite(frame_filename, display_frame)
-                    print(f"💾 Frame guardado: {frame_filename}")
+                # Controles de teclado (solo si hay display)
+                if has_display:
+                    key = cv2.waitKey(1) & 0xFF
+                    if key == ord('q'):
+                        print("\n🛑 Procesamiento interrumpido por el usuario")
+                        break
+                    elif key == ord('p'):  # Pausar/reanudar
+                        paused = not paused
+                        status = "pausado" if paused else "reanudado"
+                        print(f"⏸️ Procesamiento {status}")
+                    elif key == ord('s') and keypoints is not None:  # Guardar frame actual
+                        frame_filename = f"frame_{frame_count:06d}.png"
+                        cv2.imwrite(frame_filename, display_frame)
+                        print(f"💾 Frame guardado: {frame_filename}")
+                else:
+                    # En modo headless, solo procesar sin interacción
+                    # Opcional: añadir una pausa mínima para no saturar el CPU
+                    time.sleep(0.001)
         
         except KeyboardInterrupt:
             print("\n🛑 Procesamiento interrumpido por Ctrl+C")
@@ -698,7 +713,8 @@ if __name__ == "__main__":
         # Cerrar recursos
         cap.release()
         out.release()
-        cv2.destroyAllWindows()
+        if has_display:
+            cv2.destroyAllWindows()
         
         # Verificar archivo de salida
         if os.path.exists(output_path):
