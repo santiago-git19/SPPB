@@ -593,13 +593,8 @@ if __name__ == "__main__":
         total_process_time = 0.0
         
         # Detectar si hay display disponible (para evitar errores en entornos headless)
-        try:
-            cv2.namedWindow("test", cv2.WINDOW_NORMAL)
-            cv2.destroyWindow("test")
-            has_display = True
-        except cv2.error:
-            has_display = False
-            print("ℹ️ Modo headless detectado (sin display) - la ventana no se mostrará")
+        has_display = False
+        print("ℹ️ Modo headless detectado (sin display) - la ventana no se mostrará")
         
         try:
             while True:
