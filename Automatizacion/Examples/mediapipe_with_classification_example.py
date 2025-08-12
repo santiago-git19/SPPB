@@ -293,7 +293,7 @@ except Exception as e:
                     # Leer respuesta (bloqueante). Se podría mejorar con timeout usando hilos.
                     response = self._worker.stdout.readline()
                 rt_ms = (time.time() - t0) * 1000
-                print(response + "-------------------------")
+                #print(response + "-------------------------")
                 if not response:
                     return {'error': True, 'message': 'Empty response from persistent worker'}
                 data = json.loads(response)
@@ -301,7 +301,7 @@ except Exception as e:
                     return {'error': True, 'message': 'Worker terminating'}
                 if not data.get('success', False):
                     return {'error': True, 'message': data.get('error', 'Unknown'), 'traceback': data.get('traceback')}
-                print("^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^")
+                #print("^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^")
                 classification_result = data.get('result')
                 if classification_result and not classification_result.get('error', False):
                     self.stats['total_predictions'] += 1
