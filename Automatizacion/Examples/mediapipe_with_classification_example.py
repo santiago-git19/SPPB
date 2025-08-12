@@ -723,7 +723,7 @@ class MediaPipeWithClassifier:
             # Usar MediaPipe Tasks para obtener keypoints
             mediapipe_keypoints = self.mediapipe_processor.process_frame(image)
             logger.debug(f"🔍 MediaPipe keypoints detectados: {mediapipe_keypoints is not None}")
-            logger.debug(f"🔍 Keypoints: {mediapipe_keypoints}")
+            logger.info(f"🔍 Keypoints: {mediapipe_keypoints}")
             if mediapipe_keypoints is not None and isinstance(mediapipe_keypoints, np.ndarray):
                 logger.debug(f"🔍 Forma de keypoints: {mediapipe_keypoints.shape}")
                 logger.debug(f"🔍 Confianza promedio: {np.mean(mediapipe_keypoints[:, 2]):.3f}")
