@@ -259,8 +259,8 @@ except Exception as e:
             self._worker = subprocess.Popen(
                 ['python3.6', self.classifier_script, '--loop'],
                 stdin=subprocess.PIPE,
-                stdout=sys.stdout,  # Redirect stdout to the terminal
-                stderr=sys.stderr,  # Redirect stderr to the terminal
+                stdout=subprocess.PIPE,  # Cambiar a PIPE para leer stdout
+                stderr=subprocess.PIPE,
                 text=True,
                 bufsize=1
             )
@@ -293,6 +293,7 @@ except Exception as e:
                     # Leer respuesta (bloqueante). Se podría mejorar con timeout usando hilos.
                     response = self._worker.stdout.readline()
                 rt_ms = (time.time() - t0) * 1000
+                print(response + "-------------------------")
                 if not response:
                     return {'error': True, 'message': 'Empty response from persistent worker'}
                 data = json.loads(response)
