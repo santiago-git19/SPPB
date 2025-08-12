@@ -1,8 +1,8 @@
 import cv2
 import numpy as np
 import mediapipe as mp
-import mediapipe.tasks.python as mp_tasks
-import mediapipe.tasks.python.vision as mp_vision
+from mediapipe.tasks import python as mp_tasks
+from mediapipe.tasks.python import vision as mp_vision
 import mediapipe.tasks as mp_tasks_root
 import os
 
