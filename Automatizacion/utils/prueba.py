@@ -35,7 +35,7 @@ from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
 # STEP 2: Create an PoseLandmarker object.
-base_options = python.BaseOptions(model_asset_path='../models/pose_landmarker.task')
+base_options = python.BaseOptions(model_asset_path='../models/pose_landmarker_lite.task')
 options = vision.PoseLandmarkerOptions(
     base_options=base_options,
     output_segmentation_masks=True)
