@@ -84,40 +84,41 @@ class TRTPoseClassifier:
     }
     
     # Mapeo de keypoints MediaPipe (33) a NVIDIA (34)
+    # Topología MediaPipe corregida según especificación oficial
     MEDIAPIPE_TO_NVIDIA_MAPPING = {
         0: 15,   # nose -> nose (15)
-        1: None,   # left_eye_inner -> no equivalente directo
-        2: 17,   # right_eye -> right_eye (17)
-        3: None,   # left_eye_outer -> no equivalente directo
-        4: None,   # right_eye_inner -> no equivalente directo
-        5: 16,   # left_eye -> left_eye (16)
-        6: None,   # right_eye_outer -> no equivalente directo
-        7: 19,   # right_ear -> right_ear (19)
-        8: 18,   # left_ear -> left_ear (18)
+        1: None, # left_eye_inner -> no equivalente directo
+        2: 16,   # left_eye -> left_eye (16) - CORREGIDO
+        3: None, # left_eye_outer -> no equivalente directo
+        4: None, # right_eye_inner -> no equivalente directo
+        5: 17,   # right_eye -> right_eye (17) - CORREGIDO
+        6: None, # right_eye_outer -> no equivalente directo
+        7: 18,   # left_ear -> left_ear (18) - CORREGIDO
+        8: 19,   # right_ear -> right_ear (19) - CORREGIDO
         9: None, # mouth_left -> no equivalente directo
         10: None, # mouth_right -> no equivalente directo
-        11: 21,  # right_shoulder -> right_shoulder (21)
-        12: 20,  # left_shoulder -> left_shoulder (20)
-        13: 23,  # right_elbow -> right_elbow (23)
-        14: 22,  # left_elbow -> left_elbow (22)
-        15: 25,  # right_wrist -> right_wrist (25)
-        16: 24,  # left_wrist -> left_wrist (24)
-        17: 27,  # right_pinky_knuckle -> right_pinky_knuckle (27)
-        18: 26,  # left_pinky_knuckle -> left_pinky_knuckle (26)
-        19: 31,  # right_index_knuckle -> right_index_knuckle (31)
-        20: 30,  # left_index_knuckle -> left_index_knuckle (30)
-        21: 33,  # right_thumb_knuckle -> right_thumb_tip (33) - aproximación
-        22: 32,  # left_thumb_knuckle -> left_thumb_tip (32) - aproximación
-        23: 2,   # right_hip -> right_hip (2)
-        24: 1,   # left_hip -> left_hip (1)
-        25: 5,   # right_knee -> right_knee (5)
-        26: 4,   # left_knee -> left_knee (4)
-        27: 8,   # right_ankle -> right_ankle (8)
-        28: 7,   # left_ankle -> left_ankle (7)
-        29: 13,   # left_heel -> left_heel (13) - aproximación
-        30: 14,   # right_heel -> right_heel (14) - aproximación
-        31: 10,   # right_foot_index -> right_big_toe (10) - aproximación
-        32: 9    # left_foot_index -> left_big_toe (9) - aproximación
+        11: 20,  # left_shoulder -> left_shoulder (20) - CORREGIDO
+        12: 21,  # right_shoulder -> right_shoulder (21) - CORREGIDO
+        13: 22,  # left_elbow -> left_elbow (22) - CORREGIDO
+        14: 23,  # right_elbow -> right_elbow (23) - CORREGIDO
+        15: 24,  # left_wrist -> left_wrist (24) - CORREGIDO
+        16: 25,  # right_wrist -> right_wrist (25) - CORREGIDO
+        17: 26,  # left_pinky -> left_pinky_knuckle (26) - CORREGIDO
+        18: 27,  # right_pinky -> right_pinky_knuckle (27) - CORREGIDO
+        19: 30,  # left_index -> left_index_knuckle (30) - CORREGIDO
+        20: 31,  # right_index -> right_index_knuckle (31) - CORREGIDO
+        21: 32,  # left_thumb -> left_thumb_tip (32) - CORREGIDO
+        22: 33,  # right_thumb -> right_thumb_tip (33) - CORREGIDO
+        23: 1,   # left_hip -> left_hip (1) - CORREGIDO
+        24: 2,   # right_hip -> right_hip (2) - CORREGIDO
+        25: 4,   # left_knee -> left_knee (4) - CORREGIDO
+        26: 5,   # right_knee -> right_knee (5) - CORREGIDO
+        27: 7,   # left_ankle -> left_ankle (7) - CORREGIDO
+        28: 8,   # right_ankle -> right_ankle (8) - CORREGIDO
+        29: 13,  # left_heel -> left_heel (13) - aproximación
+        30: 14,  # right_heel -> right_heel (14) - aproximación
+        31: 9,   # left_foot_index -> left_big_toe (9) - CORREGIDO
+        32: 10   # right_foot_index -> right_big_toe (10) - CORREGIDO
     }
     
     def __init__(self, 
@@ -512,6 +513,7 @@ class TRTPoseClassifier:
         
         # Convertir secuencia a array
         sequence_list = list(self.sequence_buffer)
+        print(sequence_list)
         
         # Stack temporal: (T, V, C)
         temporal_sequence = np.stack(sequence_list, axis=0)

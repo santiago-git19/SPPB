@@ -551,14 +551,16 @@ class MediaPipeWithClassifier:
         try:
             self._classification_queue.put_nowait((frame_idx, keypoints))
         except queue.Full:
-            logger.debug("⚠️ Cola de clasificación llena, descartando frame")
+            logger.warning("⚠️ Cola de clasificación llena, descartando frame")
 
     def _get_classification_result(self, frame_idx: int):
         if not self.parallel_classification:
             return None
         with self._classification_results_lock:
-            return self._classification_results.pop(frame_idx, None)
-    
+            result = self._classification_results.pop(frame_idx, None)
+            logger.info(f"🔍 Resultado de clasificación para frame {frame_idx}: {result}")
+            return result
+
     def validate_topology_mapping(self, mediapipe_keypoints: np.ndarray) -> dict:
         """
         Valida la conversión de topología MediaPipe a NVIDIA
@@ -723,7 +725,6 @@ class MediaPipeWithClassifier:
             # Usar MediaPipe Tasks para obtener keypoints
             mediapipe_keypoints = self.mediapipe_processor.process_frame(image)
             logger.debug(f"🔍 MediaPipe keypoints detectados: {mediapipe_keypoints is not None}")
-            logger.info(f"🔍 Keypoints: {mediapipe_keypoints}")
             if mediapipe_keypoints is not None and isinstance(mediapipe_keypoints, np.ndarray):
                 logger.debug(f"🔍 Forma de keypoints: {mediapipe_keypoints.shape}")
                 logger.debug(f"🔍 Confianza promedio: {np.mean(mediapipe_keypoints[:, 2]):.3f}")
