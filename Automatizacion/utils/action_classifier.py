@@ -830,7 +830,7 @@ class TRTPoseClassifier:
     def __repr__(self) -> str:
         return self.__str__()
 
-
+'''
 class TRTPoseClassifierManager:
     """
     Manager para manejar múltiples clasificadores de poses o diferentes configuraciones
@@ -904,7 +904,7 @@ def create_pose_classifier(model_path: str,
         **kwargs
     )
 
-
+'''
 # Ejemplo de uso
 if __name__ == "__main__":
     # Configurar logging para ejemplo
