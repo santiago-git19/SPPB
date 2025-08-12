@@ -259,9 +259,8 @@ except Exception as e:
             self._worker = subprocess.Popen(
                 ['python3.6', self.classifier_script, '--loop'],
                 stdin=subprocess.PIPE,
-                stdout=sys.stdout,  # Redirigir stdout a la terminal principal
-                #stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stdout=sys.stdout,  # Redirect stdout to the terminal
+                stderr=sys.stderr,  # Redirect stderr to the terminal
                 text=True,
                 bufsize=1
             )
@@ -273,13 +272,6 @@ except Exception as e:
                         logger.debug(f"[CLF36] {line}")
             threading.Thread(target=_stderr_reader, args=(self._worker,), daemon=True).start()
 
-            def _stdout_reader(proc):
-                for line in proc.stdout:
-                    line = line.rstrip()
-                    if line:
-                        logger.info(f"[CLF36 STDOUT] {line}")
-
-            threading.Thread(target=_stdout_reader, args=(self._worker,), daemon=True).start()
             logger.info("✅ Clasificador persistente iniciado")
         except Exception as e:
             logger.error(f"❌ No se pudo iniciar proceso persistente: {e}")
