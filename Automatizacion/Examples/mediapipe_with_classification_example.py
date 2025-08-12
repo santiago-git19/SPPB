@@ -282,7 +282,7 @@ except Exception as e:
         Procesa keypoints usando el clasificador en Python 3.6
         """
         # Ruta optimizada si proceso persistente activo
-        print("\n" + keypoints + "\n")
+        print(f"\n{keypoints}\n")
         if self._persistent and self._worker and self._worker.stdin and self._worker.poll() is None:
             try:
                 payload = {'keypoints': keypoints.tolist()}
