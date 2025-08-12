@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python3.9
 """
 Ejemplo de Uso: MediaPipe Tasks + Clasificación de Poses + Validación de Topología
 =================================================================================
@@ -6,10 +6,14 @@ Ejemplo de Uso: MediaPipe Tasks + Clasificación de Poses + Validación de Topol
 Este script demuestra cómo integrar MediaPipe Tasks con el clasificador de poses
 PoseClassificationNet de NVIDIA TAO, incluyendo validación de la conversión de topología.
 
+IMPORTANTE: Este script maneja automáticamente las dependencias de Python:
+- Python 3.9 para MediaPipe Tasks (self.mediapipe_processor)
+- Python 3.6 para el clasificador TensorRT (self.pose_classifier via subprocess)
+
 Flujo de trabajo:
-1. MediaPipe Tasks detecta keypoints de personas en video (33 keypoints)
+1. MediaPipe Tasks detecta keypoints de personas en video (33 keypoints) - Python 3.9
 2. Se valida y convierte la topología de MediaPipe a NVIDIA (34 keypoints)
-3. TRTPoseClassifier procesa y clasifica las poses
+3. TRTPoseClassifier procesa y clasifica las poses via subprocess - Python 3.6
 4. Se muestra el resultado en tiempo real con validación visual
 
 Autor: Sistema de IA
@@ -23,19 +27,264 @@ import logging
 from pathlib import Path
 import matplotlib.pyplot as plt
 import json
+import subprocess
+import tempfile
+import os
 
 import sys
 from pathlib import Path
 # Añadir el directorio 'Automatizacion' al sys.path
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
-# Importar nuestras clases
+# Importar solo MediaPipe Tasks (Python 3.9)
 from utils.prueba import MediaPipeTasksPoseProcessor
-from utils.action_classifier import TRTPoseClassifier, create_pose_classifier
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+class PoseClassifierPython36:
+    """
+    Wrapper para el clasificador de poses que se ejecuta en Python 3.6 via subprocess
+    """
+    
+    def __init__(self, model_path: str, sequence_length: int = 30, confidence_threshold: float = 0.2):
+        self.model_path = model_path
+        self.sequence_length = sequence_length
+        self.confidence_threshold = confidence_threshold
+        
+        # Crear directorio temporal para comunicación entre procesos
+        self.temp_dir = tempfile.mkdtemp(prefix="pose_classifier_")
+        self.input_file = os.path.join(self.temp_dir, "keypoints_input.json")
+        self.output_file = os.path.join(self.temp_dir, "classification_output.json")
+        
+        # Crear script de clasificación para Python 3.6
+        self.classifier_script = self._create_classifier_script()
+        
+        # Buffer de secuencias para el clasificador
+        self.sequence_buffer = []
+        
+        # Estadísticas
+        self.stats = {
+            'total_predictions': 0,
+            'confident_predictions': 0,
+            'class_predictions': {
+                'sitting_down': 0, 'getting_up': 0, 'sitting': 0,
+                'standing': 0, 'walking': 0, 'jumping': 0
+            }
+        }
+        
+        logger.info("✅ PoseClassifierPython36 inicializado (Python 3.6 subprocess)")
+        logger.info(f"   📁 Modelo: {os.path.basename(model_path)}")
+        logger.info(f"   📂 Temp dir: {self.temp_dir}")
+    
+    def _create_classifier_script(self) -> str:
+        """Crea el script de clasificación para Python 3.6"""
+        script_path = os.path.join(self.temp_dir, "classifier_worker.py")
+        
+        script_content = f'''#!/usr/bin/env python3.6
+import json
+import sys
+import os
+import numpy as np
+
+# Añadir path
+sys.path.append("{str(Path(__file__).resolve().parent.parent)}")
+
+try:
+    from utils.action_classifier import create_pose_classifier
+    
+    # Crear clasificador
+    classifier = create_pose_classifier(
+        model_path="{self.model_path}",
+        input_keypoint_format='mediapipe',
+        keypoint_format='nvidia',
+        sequence_length={self.sequence_length},
+        confidence_threshold={self.confidence_threshold}
+    )
+    
+    def process_keypoints(input_file, output_file):
+        try:
+            # Leer keypoints del archivo
+            with open(input_file, 'r') as f:
+                data = json.load(f)
+            
+            keypoints = np.array(data['keypoints'])
+            
+            # Procesar con el clasificador
+            result = classifier.process_keypoints(keypoints)
+            
+            # Escribir resultado
+            output_data = {{
+                'success': True,
+                'result': result if result else {{'error': True}},
+                'stats': classifier.get_statistics()
+            }}
+            
+            with open(output_file, 'w') as f:
+                json.dump(output_data, f)
+                
+        except Exception as e:
+            # Escribir error
+            with open(output_file, 'w') as f:
+                json.dump({{'success': False, 'error': str(e)}}, f)
+    
+    if __name__ == "__main__":
+        if len(sys.argv) != 3:
+            print("Uso: python3.6 classifier_worker.py <input_file> <output_file>")
+            sys.exit(1)
+        
+        input_file = sys.argv[1]
+        output_file = sys.argv[2]
+        
+        process_keypoints(input_file, output_file)
+
+except ImportError as e:
+    # Error de importación - escribir error
+    with open(sys.argv[2] if len(sys.argv) > 2 else "/tmp/error.json", 'w') as f:
+        json.dump({{'success': False, 'error': f"ImportError: {{str(e)}}"}}, f)
+'''
+        
+        with open(script_path, 'w') as f:
+            f.write(script_content)
+        
+        # Hacer ejecutable
+        os.chmod(script_path, 0o755)
+        
+        return script_path
+    
+    def process_keypoints(self, keypoints: np.ndarray) -> dict:
+        """
+        Procesa keypoints usando el clasificador en Python 3.6
+        """
+        try:
+            # Guardar keypoints en archivo temporal
+            input_data = {
+                'keypoints': keypoints.tolist(),
+                'timestamp': time.time()
+            }
+            
+            with open(self.input_file, 'w') as f:
+                json.dump(input_data, f)
+            
+            # Ejecutar clasificador en Python 3.6
+            cmd = ['python3.6', self.classifier_script, self.input_file, self.output_file]
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=30  # Timeout de 30 segundos
+            )
+            
+            if result.returncode != 0:
+                logger.error(f"❌ Error ejecutando clasificador Python 3.6: {result.stderr}")
+                return {'error': True, 'message': 'Subprocess failed'}
+            
+            # Leer resultado
+            if os.path.exists(self.output_file):
+                with open(self.output_file, 'r') as f:
+                    output_data = json.load(f)
+                
+                if output_data.get('success', False):
+                    classification_result = output_data.get('result')
+                    
+                    # Actualizar estadísticas locales
+                    if classification_result and not classification_result.get('error', False):
+                        self.stats['total_predictions'] += 1
+                        if classification_result.get('confidence', 0) > 0.5:
+                            self.stats['confident_predictions'] += 1
+                        
+                        pose_class = classification_result.get('predicted_class', 'unknown')
+                        if pose_class in self.stats['class_predictions']:
+                            self.stats['class_predictions'][pose_class] += 1
+                    
+                    return classification_result
+                else:
+                    logger.error(f"❌ Error en clasificador: {output_data.get('error', 'Unknown')}")
+                    return {'error': True, 'message': output_data.get('error', 'Unknown')}
+            else:
+                logger.error("❌ Archivo de salida no encontrado")
+                return {'error': True, 'message': 'Output file not found'}
+                
+        except subprocess.TimeoutExpired:
+            logger.error("❌ Timeout ejecutando clasificador Python 3.6")
+            return {'error': True, 'message': 'Subprocess timeout'}
+        except Exception as e:
+            logger.error(f"❌ Error procesando keypoints: {e}")
+            return {'error': True, 'message': str(e)}
+    
+    def reset_sequence(self):
+        """Reinicia la secuencia del clasificador"""
+        # Para reiniciar, podríamos llamar al script con una función especial
+        # Por simplicidad, solo limpiamos el buffer local
+        self.sequence_buffer.clear()
+        logger.info("🔄 Secuencia de clasificador reiniciada")
+    
+    def get_statistics(self) -> dict:
+        """Obtiene estadísticas del clasificador"""
+        total = self.stats['total_predictions']
+        confident = self.stats['confident_predictions']
+        
+        return {
+            'total_predictions': total,
+            'confident_predictions': confident,
+            'confidence_rate': confident / total if total > 0 else 0.0,
+            'class_distribution': self.stats['class_predictions'].copy(),
+            'most_common_class': max(self.stats['class_predictions'], 
+                                   key=self.stats['class_predictions'].get)
+        }
+    
+    def cleanup(self):
+        """Limpia archivos temporales"""
+        try:
+            import shutil
+            shutil.rmtree(self.temp_dir)
+            logger.info("✅ Archivos temporales del clasificador limpiados")
+        except Exception as e:
+            logger.warning(f"⚠️ Error limpiando archivos temporales: {e}")
+    
+    def __del__(self):
+        """Destructor"""
+        self.cleanup()
+    
+    # Mapeo para compatibilidad con la validación
+    MEDIAPIPE_TO_NVIDIA_MAPPING = {
+        0: 15,   # nose -> nose (15)
+        1: None, # left_eye_inner -> no equivalente directo
+        2: 16,   # left_eye -> left_eye (16)
+        3: None, # left_eye_outer -> no equivalente directo
+        4: None, # right_eye_inner -> no equivalente directo
+        5: 17,   # right_eye -> right_eye (17)
+        6: None, # right_eye_outer -> no equivalente directo
+        7: 18,   # left_ear -> left_ear (18)
+        8: 19,   # right_ear -> right_ear (19)
+        9: None, # mouth_left -> no equivalente directo
+        10: None, # mouth_right -> no equivalente directo
+        11: 20,  # left_shoulder -> left_shoulder (20)
+        12: 21,  # right_shoulder -> right_shoulder (21)
+        13: 22,  # left_elbow -> left_elbow (22)
+        14: 23,  # right_elbow -> right_elbow (23)
+        15: 24,  # left_wrist -> left_wrist (24)
+        16: 25,  # right_wrist -> right_wrist (25)
+        17: 26,  # left_pinky -> left_pinky_knuckle (26)
+        18: 27,  # right_pinky -> right_pinky_knuckle (27)
+        19: 30,  # left_index -> left_index_knuckle (30)
+        20: 31,  # right_index -> right_index_knuckle (31)
+        21: 32,  # left_thumb -> left_thumb_tip (32)
+        22: 33,  # right_thumb -> right_thumb_tip (33)
+        23: 1,   # left_hip -> left_hip (1)
+        24: 2,   # right_hip -> right_hip (2)
+        25: 4,   # left_knee -> left_knee (4)
+        26: 5,   # right_knee -> right_knee (5)
+        27: 7,   # left_ankle -> left_ankle (7)
+        28: 8,   # right_ankle -> right_ankle (8)
+        29: 13,  # left_heel -> left_heel (13)
+        30: 14,  # right_heel -> right_heel (14)
+        31: 9,   # left_foot_index -> left_big_toe (9)
+        32: 10   # right_foot_index -> right_big_toe (10)
+    }
+
 
 class MediaPipeWithClassifier:
     """
@@ -79,20 +328,20 @@ class MediaPipeWithClassifier:
         """
         self.validation_mode = validation_mode
         
-        # Crear procesador de MediaPipe Tasks
+        # Crear procesador de MediaPipe Tasks (Python 3.9)
+        logger.info("🔧 Inicializando MediaPipe processor (Python 3.9)...")
         self.mediapipe_processor = MediaPipeTasksPoseProcessor(
             model_path=mediapipe_model_path,
             confidence_threshold=0.3,
             debug=False
         )
         
-        # Crear clasificador de poses
-        self.pose_classifier = create_pose_classifier(
+        # Crear clasificador de poses con wrapper Python 3.6
+        logger.info("🔧 Inicializando clasificador de poses (Python 3.6 subprocess)...")
+        self.pose_classifier = PoseClassifierPython36(
             model_path=pose_classifier_model_path,
-            input_keypoint_format='mediapipe',  # ✅ Especificar entrada MediaPipe
-            keypoint_format='nvidia',          # Formato del modelo
-            sequence_length=30,                # Secuencia más corta para pruebas
-            confidence_threshold=0.2           # Umbral más bajo para capturar más datos
+            sequence_length=30,
+            confidence_threshold=0.2
         )
         
         # Estadísticas
@@ -113,8 +362,8 @@ class MediaPipeWithClassifier:
         }
         
         logger.info("✅ Sistema MediaPipe + Clasificador + Validación inicializado")
-        logger.info("   🎯 Procesador: MediaPipeTasksPoseProcessor")
-        logger.info("   🎭 Clasificador: TRTPoseClassifier (entrada MediaPipe)")
+        logger.info("   🎯 Procesador: MediaPipeTasksPoseProcessor (Python 3.9)")
+        logger.info("   🎭 Clasificador: PoseClassifierPython36 (subprocess Python 3.6)")
         logger.info(f"   🔍 Validación de topología: {'Activada' if validation_mode else 'Desactivada'}")
         
     def validate_topology_mapping(self, mediapipe_keypoints: np.ndarray) -> dict:
@@ -484,7 +733,7 @@ class MediaPipeWithClassifier:
         print(f"🎭 Poses clasificadas: {self.stats['poses_classified']}")
         
         # Estadísticas de validación
-        print(f"\n🔍 VALIDACIÓN DE TOPOLOGÍA:")
+        print("\n🔍 VALIDACIÓN DE TOPOLOGÍA:")
         print(f"   📊 Validaciones realizadas: {self.stats['topology_validations']}")
         print(f"   ❌ Errores de mapeo: {self.stats['mapping_errors']}")
         
@@ -501,14 +750,33 @@ class MediaPipeWithClassifier:
         
         # Estadísticas del clasificador
         classifier_stats = self.pose_classifier.get_statistics()
-        print(f"\n🎭 CLASIFICACIÓN:")
+        print("\n🎭 CLASIFICACIÓN:")
         print(f"   🎯 Tasa de confianza: {classifier_stats['confidence_rate']:.2f}")
         print(f"   🏆 Clase más común: {classifier_stats['most_common_class']}")
         
-        print(f"\n📊 Distribución de clases:")
+        print("\n📊 Distribución de clases:")
         for class_name, count in classifier_stats['class_distribution'].items():
             percentage = (count / classifier_stats['total_predictions']) * 100 if classifier_stats['total_predictions'] > 0 else 0
             print(f"   {class_name}: {count} ({percentage:.1f}%)")
+
+    def cleanup(self):
+        """Limpieza del sistema completo"""
+        try:
+            # Limpiar clasificador Python 3.6
+            if hasattr(self, 'pose_classifier'):
+                self.pose_classifier.cleanup()
+            
+            # Limpiar MediaPipe processor
+            if hasattr(self, 'mediapipe_processor'):
+                self.mediapipe_processor.close()
+            
+            logger.info("✅ Sistema completamente limpiado")
+        except Exception as e:
+            logger.warning(f"⚠️ Error en cleanup: {e}")
+    
+    def __del__(self):
+        """Destructor"""
+        self.cleanup()
 
 
 def main():
@@ -526,10 +794,10 @@ def main():
     for key in required_files:
         if not Path(config[key]).exists():
             print(f"❌ Archivo no encontrado: {config[key]}")
-            print(f"💡 Para usar este ejemplo:")
-            print(f"   1. Asegúrate de que el modelo MediaPipe .task esté disponible")
-            print(f"   2. Descarga PoseClassificationNet de NGC en formato .engine")
-            print(f"   3. Ajusta las rutas en la configuración")
+            print("💡 Para usar este ejemplo:")
+            print("   1. Asegúrate de que el modelo MediaPipe .task esté disponible")
+            print("   2. Descarga PoseClassificationNet de NGC en formato .engine")
+            print("   3. Ajusta las rutas en la configuración")
             return False
     
     try:
@@ -547,12 +815,24 @@ def main():
             output_path=config['output_video']
         )
         
+        # Limpiar recursos
+        print("🧹 Limpiando recursos del sistema...")
+        system.cleanup()
+        
         return True
         
     except Exception as e:
         logger.error(f"❌ Error en main: {e}")
         import traceback
         traceback.print_exc()
+        
+        # Intentar limpiar recursos aún con error
+        try:
+            if 'system' in locals():
+                system.cleanup()
+        except Exception:
+            pass
+            
         return False
 
 
