@@ -485,8 +485,10 @@ class MediaPipeTasksPoseProcessor:
 
 # Ejemplo de uso
 if __name__ == "__main__":
-    print("🎭 MediaPipe Tasks Pose Processor - Ejemplo de uso")
-    print("=" * 50)
+    import sys
+    
+    print("🎭 MediaPipe Tasks Pose Processor - Procesador de Video")
+    print("=" * 60)
     
     # Verificar disponibilidad de MediaPipe
     if not MP_AVAILABLE:
@@ -494,38 +496,233 @@ if __name__ == "__main__":
         print("💡 Instale MediaPipe: pip install mediapipe")
         exit(1)
     
+    # Verificar argumentos de línea de comandos
+    if len(sys.argv) < 2:
+        print("📖 Uso: python prueba.py <ruta_del_video> [ruta_salida_opcional]")
+        print("\n📋 Ejemplos:")
+        print("   python prueba.py video.mp4")
+        print("   python prueba.py video.mp4 output_procesado.mp4")
+        print("   python prueba.py 0  # Para usar la cámara web")
+        
+        # Buscar videos en el directorio actual como ayuda
+        print("\n🔍 Videos encontrados en el directorio actual:")
+        video_extensions = ['.mp4', '.avi', '.mov', '.mkv', '.wmv', '.flv', '.webm']
+        found_videos = []
+        for file in os.listdir('.'):
+            if any(file.lower().endswith(ext) for ext in video_extensions):
+                found_videos.append(file)
+        
+        if found_videos:
+            for video in found_videos[:5]:  # Mostrar máximo 5
+                print(f"   📁 {video}")
+        else:
+            print("   ❌ No se encontraron videos")
+        exit(1)
+    
+    # Obtener rutas de entrada y salida
+    input_path = sys.argv[1]
+    output_path = sys.argv[2] if len(sys.argv) > 2 else "pose_output_video.mp4"
+    
+    # Verificar si es cámara web
+    use_camera = input_path == "0"
+    
+    # Verificar si el archivo de entrada existe (solo para archivos, no cámara)
+    if not use_camera and not os.path.exists(input_path):
+        print(f"❌ Video no encontrado: {input_path}")
+        exit(1)
+    
     # Crear procesador con modelo MediaPipe Tasks
     model_path = "../models/pose_landmarker_lite.task"
     
     if not os.path.exists(model_path):
         print(f"❌ Modelo no encontrado: {model_path}")
+        print("💡 Asegúrese de que el modelo esté en la ruta ../models/")
         exit(1)
     
     try:
-        processor = MediaPipeTasksPoseProcessor(model_path=model_path, debug=True)
+        print(f"⚙️ Inicializando procesador...")
+        processor = MediaPipeTasksPoseProcessor(model_path=model_path, debug=False)
         
-        # Probar con imagen
-        test_image_path = "persona.PNG"
-        if os.path.exists(test_image_path):
-            frame = cv2.imread(test_image_path)
-            keypoints = processor.process_frame(frame)
-            
-            if keypoints is not None:
-                # Calcular ángulos
-                angles = processor.get_pose_angles(keypoints)
-                print(f"✅ Ángulos detectados: {angles}")
+        # Abrir video de entrada
+        if use_camera:
+            print("📹 Abriendo cámara web...")
+            cap = cv2.VideoCapture(0)
+        else:
+            print(f"📁 Abriendo video: {input_path}")
+            cap = cv2.VideoCapture(input_path)
+        
+        if not cap.isOpened():
+            source = "cámara web" if use_camera else input_path
+            print(f"❌ Error abriendo {source}")
+            exit(1)
+        
+        # Obtener propiedades del video
+        fps = int(cap.get(cv2.CAP_PROP_FPS)) or 30
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) if not use_camera else 0
+        
+        print(f"📊 Propiedades del video:")
+        print(f"   📐 Resolución: {width}x{height}")
+        print(f"   🎬 FPS: {fps}")
+        if not use_camera:
+            print(f"   🔢 Total frames: {total_frames}")
+            duration = total_frames / fps if fps > 0 else 0
+            print(f"   ⏱️ Duración: {duration:.1f} segundos")
+        
+        # Configurar video de salida
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+        
+        if not out.isOpened():
+            print(f"❌ Error creando video de salida: {output_path}")
+            cap.release()
+            exit(1)
+        
+        print(f"✅ Video de salida configurado: {output_path}")
+        print("\n🚀 Iniciando procesamiento...")
+        print("⌨️ Controles: 'q' = salir, 'p' = pausar/reanudar, 's' = guardar frame")
+        
+        # Variables de procesamiento
+        frame_count = 0
+        poses_detected = 0
+        start_time = time.time()
+        paused = False
+        
+        # Estadísticas de rendimiento
+        total_process_time = 0.0
+        
+        try:
+            while True:
+                if not paused:
+                    ret, frame = cap.read()
+                    
+                    if not ret:
+                        if use_camera:
+                            print("❌ Error leyendo de la cámara")
+                        else:
+                            print("✅ Video procesado completamente")
+                        break
+                    
+                    frame_count += 1
+                    
+                    # Mostrar progreso para videos (cada 30 frames)
+                    if not use_camera and frame_count % 30 == 0:
+                        progress = (frame_count / total_frames) * 100 if total_frames > 0 else 0
+                        elapsed = time.time() - start_time
+                        fps_actual = frame_count / elapsed if elapsed > 0 else 0
+                        print(f"⏳ Progreso: {progress:.1f}% ({frame_count}/{total_frames}) - FPS: {fps_actual:.1f}")
+                    
+                    # Procesar frame
+                    frame_start = time.time()
+                    keypoints = processor.process_frame(frame)
+                    process_time = time.time() - frame_start
+                    total_process_time += process_time
+                    
+                    # Crear frame visualizado
+                    if keypoints is not None:
+                        poses_detected += 1
+                        
+                        # Calcular ángulos
+                        angles = processor.get_pose_angles(keypoints)
+                        
+                        # Visualizar keypoints
+                        visualized = processor.visualize_keypoints(
+                            frame, keypoints,
+                            draw_landmarks=True,
+                            draw_connections=True,
+                            draw_labels=False
+                        )
+                        
+                        # Mostrar información en pantalla
+                        info_text = [
+                            "MediaPipe Tasks BlazePose",
+                            f"Frame: {frame_count}",
+                            f"Poses: {poses_detected}",
+                            f"Process: {process_time*1000:.1f}ms"
+                        ]
+                        
+                        # Añadir ángulos a la información
+                        for angle_name, angle_value in angles.items():
+                            info_text.append(f"{angle_name}: {angle_value:.1f}°")
+                        
+                        # Dibujar información
+                        for i, text in enumerate(info_text):
+                            color = (0, 255, 255) if i == 0 else (0, 255, 0)  # Amarillo para título
+                            cv2.putText(visualized, text, (10, 30 + i*25),
+                                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+                        
+                        display_frame = visualized
+                    else:
+                        # No se detectaron poses
+                        cv2.putText(frame, f"No pose detected - Frame {frame_count}", (10, 30),
+                                   cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                        display_frame = frame
+                    
+                    # Guardar frame en video de salida
+                    out.write(display_frame)
+                    
+                    # Mostrar frame (opcional para videos, comentar si no se necesita)
+                    cv2.imshow("MediaPipe Tasks Pose Processing", display_frame)
                 
-                # Visualizar keypoints
-                visualized = processor.visualize_keypoints(frame, keypoints)
-                cv2.imwrite('pose_output_task_class.png', visualized)
-                print("✅ Imagen procesada guardada en: pose_output_task_class.png")
-            else:
-                print("🚫 No se detectaron poses en la imagen")
+                # Controles de teclado
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord('q'):
+                    print("\n🛑 Procesamiento interrumpido por el usuario")
+                    break
+                elif key == ord('p'):  # Pausar/reanudar
+                    paused = not paused
+                    status = "pausado" if paused else "reanudado"
+                    print(f"⏸️ Procesamiento {status}")
+                elif key == ord('s') and keypoints is not None:  # Guardar frame actual
+                    frame_filename = f"frame_{frame_count:06d}.png"
+                    cv2.imwrite(frame_filename, display_frame)
+                    print(f"💾 Frame guardado: {frame_filename}")
         
-        # Limpiar recursos
+        except KeyboardInterrupt:
+            print("\n🛑 Procesamiento interrumpido por Ctrl+C")
+        
+        # Estadísticas finales
+        elapsed_total = time.time() - start_time
+        avg_fps = frame_count / elapsed_total if elapsed_total > 0 else 0
+        avg_process_time = (total_process_time / frame_count) * 1000 if frame_count > 0 else 0
+        detection_rate = (poses_detected / frame_count) * 100 if frame_count > 0 else 0
+        
+        print(f"\n📊 Estadísticas finales:")
+        print(f"   🎬 Frames procesados: {frame_count}")
+        print(f"   👤 Poses detectadas: {poses_detected} ({detection_rate:.1f}%)")
+        print(f"   ⏱️ Tiempo total: {elapsed_total:.1f}s")
+        print(f"   📈 FPS promedio: {avg_fps:.1f}")
+        print(f"   ⚡ Tiempo promedio por frame: {avg_process_time:.1f}ms")
+        
+        # Cerrar recursos
+        cap.release()
+        out.release()
+        cv2.destroyAllWindows()
+        
+        # Verificar archivo de salida
+        if os.path.exists(output_path):
+            file_size = os.path.getsize(output_path) / (1024 * 1024)  # MB
+            print(f"\n✅ Video procesado exitosamente:")
+            print(f"   📁 Archivo: {output_path}")
+            print(f"   📊 Tamaño: {file_size:.2f} MB")
+        else:
+            print(f"\n❌ Error: El video no se guardó correctamente")
+        
+        # Limpiar recursos del procesador
         processor.cleanup()
         
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"❌ Error durante el procesamiento: {e}")
+        import traceback
+        traceback.print_exc()
     
-    print("\n✅ Ejemplo completado")
+    print("\n✅ Procesamiento completado")
+    print("\n📋 Información de MediaPipe Tasks:")
+    print("   • Modelo: pose_landmarker_lite.task")
+    print("   • Total: 33 keypoints detectados")
+    print("   • Tecnología: MediaPipe Tasks API")
+    print("\n💡 Para usar desde código:")
+    print("   from prueba import MediaPipeTasksPoseProcessor")
+    print("   processor = MediaPipeTasksPoseProcessor('../models/pose_landmarker_lite.task')")
+    print("   keypoints = processor.process_frame(frame)  # [33, 3] array")
