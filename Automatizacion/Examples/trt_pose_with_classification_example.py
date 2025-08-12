@@ -197,11 +197,7 @@ class TRTPoseWithClassifier:
     
     def process_video(self, video_source: str = 0, output_path: str = None):
         """
-        Procesa video en tiempo real
-        
-        Args:
-            video_source: Fuente de video (0 para cámara, ruta para archivo)
-            output_path: Ruta para guardar video procesado (opcional)
+        Procesa video en tiempo real (sin GUI para entorno SSH)
         """
         cap = cv2.VideoCapture(video_source)
         
@@ -218,9 +214,7 @@ class TRTPoseWithClassifier:
             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
         
-        logger.info("🎥 Iniciando procesamiento de video...")
-        logger.info("   Presiona 'q' para salir")
-        logger.info("   Presiona 'r' para reiniciar secuencia de clasificación")
+        logger.info("🎥 Iniciando procesamiento de video (headless)...")
         
         try:
             while True:
@@ -231,23 +225,9 @@ class TRTPoseWithClassifier:
                 # Procesar frame con clasificación
                 frame_result = self.process_frame_with_classification(frame)
                 
-                # Dibujar resultados
-                result_frame = self.draw_results(frame, frame_result)
-                
-                # Mostrar
-                cv2.imshow('TRT Pose + Clasificación', result_frame)
-                
                 # Guardar si se especifica
                 if out:
-                    out.write(result_frame)
-                
-                # Controles de teclado
-                key = cv2.waitKey(1) & 0xFF
-                if key == ord('q'):
-                    break
-                elif key == ord('r'):
-                    self.pose_classifier.reset_sequence()
-                    logger.info("🔄 Secuencia de clasificación reiniciada")
+                    out.write(self.draw_results(frame, frame_result))
                 
         except KeyboardInterrupt:
             logger.info("⚠️ Procesamiento interrumpido")
@@ -256,7 +236,6 @@ class TRTPoseWithClassifier:
             cap.release()
             if out:
                 out.release()
-            cv2.destroyAllWindows()
             
             # Mostrar estadísticas finales
             self._print_final_statistics()
