@@ -1057,7 +1057,7 @@ def main():
     config = {
         'mediapipe_model': '../models/pose_landmarker_lite.task',
         'pose_classifier_model': '../models/pose_classification/st-gcn_3dbp_nvidia.engine',
-        'video_source': '../Videos/Entrada/WIN_20250722_13_47_30_Pro.mp4',  # 0 para cámara
+        'video_source': '../Videos/Entrada/WIN_20250702_12_09_08_Pro',  # 0 para cámara
         'output_video': '../Videos/Salida/mediapipe_validation_output.mp4'  # None para no guardar
     }
     
