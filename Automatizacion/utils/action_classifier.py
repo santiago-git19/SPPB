@@ -609,6 +609,8 @@ class TRTPoseClassifier:
             # ✅ SOLUCIÓN: Asegurar que el array sea contiguo
             input_tensor = np.ascontiguousarray(input_tensor.astype(np.float32))
             
+            # Configurar NumPy para mostrar todo el tensor
+            np.set_printoptions(threshold=np.inf, linewidth=np.inf)
             print("\n" + str(input_tensor) + "\n")
 
             # Ejecutar inferencia TensorRT
