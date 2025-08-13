@@ -382,7 +382,6 @@ class TRTPoseClassifier:
             target_keypoints[3] = (target_keypoints[0] + target_keypoints[6]) / 2.0  # torso = promedio de hips y neck
         
         logger.debug(f"🔄 MediaPipe->NVIDIA: {keypoints.shape} -> {target_keypoints.shape}")
-        print("\n" + str(target_keypoints) + "\n")
 
         return target_keypoints
     
@@ -622,6 +621,7 @@ class TRTPoseClassifier:
             
             # Copiar resultado de GPU a CPU
             h_output = np.empty(self.output_shape, dtype=np.float32)
+            print(f"Salida cruda del modelo (h_output): {h_output}")
             cuda.memcpy_dtoh(h_output, self.d_output)
             
             inference_time = time.time() - start_time
