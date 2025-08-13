@@ -609,13 +609,14 @@ class TRTPoseClassifier:
             # ✅ SOLUCIÓN: Asegurar que el array sea contiguo
             input_tensor = np.ascontiguousarray(input_tensor.astype(np.float32))
             
+            print("\n" + str(input_tensor) + "\n")
+
             # Ejecutar inferencia TensorRT
             start_time = time.time()
             
             # Copiar datos a GPU
             cuda.memcpy_htod(self.d_input, input_tensor)
 
-            print("\n" + str(self.d_input) + "\n")
 
             # Ejecutar inferencia
             bindings = [int(self.d_input), int(self.d_output)]
