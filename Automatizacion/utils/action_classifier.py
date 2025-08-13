@@ -405,24 +405,86 @@ class TRTPoseClassifier:
     
     def _normalize_keypoints(self, keypoints: np.ndarray) -> np.ndarray:
         """
-        Normaliza las coordenadas de keypoints entre 0 y 10
-
-        Args:
-            keypoints: Array [num_keypoints, 3]
-
-        Returns:
-            Array normalizado
+        Normaliza coordenadas centrando en pelvis/caderas y escalando por tamaño de torso.
+        - Centro: joint raíz (hips, idx 0). Fallbacks: media de caderas (1,2), neck (6), media de válidos.
+        - Escala: mediana de distancias: hombro-cadera (izq/der), neck-hips, y respaldos (anchos hombros/caderas).
+        Solo se aplican transformaciones sobre keypoints válidos (conf > 0); los no válidos permanecen en (0,0,0).
         """
         normalized = keypoints.copy()
-
-        # Filtrar keypoints válidos (no cero)
-        valid_mask = (keypoints[:, 0] != 0) | (keypoints[:, 1] != 0)
-
-        if np.any(valid_mask):
-            # Normalizar coordenadas x e y al rango [0, 10]
-            normalized[valid_mask, 0] = ((keypoints[valid_mask, 0] - np.min(keypoints[valid_mask, 0])) / (np.max(keypoints[valid_mask, 0]) - np.min(keypoints[valid_mask, 0])) * 10)
-            normalized[valid_mask, 1] = ((keypoints[valid_mask, 1] - np.min(keypoints[valid_mask, 1])) / (np.max(keypoints[valid_mask, 1]) - np.min(keypoints[valid_mask, 1])) * 10)
-
+        
+        # Validación básica de forma
+        if keypoints.ndim != 2 or keypoints.shape[1] != 3:
+            return normalized
+        
+        # Válidos por confianza (>0). Los inválidos suelen estar en (0,0,0)
+        valid_mask = keypoints[:, 2] > 0
+        if not np.any(valid_mask):
+            return normalized
+        
+        kps = keypoints
+        
+        # Helper para acceso seguro por índice
+        def get_kp(idx: int):
+            if 0 <= idx < kps.shape[0]:
+                return kps[idx]
+            return np.array([0.0, 0.0, 0.0], dtype=np.float32)
+        
+        # Índices NVIDIA relevantes
+        hips = get_kp(0)   # pelvis/caderas (deducido como promedio de 1 y 2 en la conversión)
+        lhip = get_kp(1)
+        rhip = get_kp(2)
+        neck = get_kp(6)
+        lsh  = get_kp(20)
+        rsh  = get_kp(21)
+        
+        # 1) Centro (root)
+        if hips[2] > 0:
+            root_xy = hips[:2]
+        elif lhip[2] > 0 and rhip[2] > 0:
+            root_xy = (lhip[:2] + rhip[:2]) / 2.0
+        elif neck[2] > 0:
+            root_xy = neck[:2]
+        else:
+            # Respaldo: centro de masa de los válidos
+            root_xy = np.mean(kps[valid_mask, :2], axis=0)
+        
+        # Centrar
+        normalized[valid_mask, 0] = kps[valid_mask, 0] - root_xy[0]
+        normalized[valid_mask, 1] = kps[valid_mask, 1] - root_xy[1]
+        
+        # 2) Escala (tamaño del cuerpo)
+        scales = []
+        # hombro- cadera izquierda/derecha
+        if lsh[2] > 0 and lhip[2] > 0:
+            scales.append(float(np.linalg.norm(lsh[:2] - lhip[:2])))
+        if rsh[2] > 0 and rhip[2] > 0:
+            scales.append(float(np.linalg.norm(rsh[:2] - rhip[:2])))
+        # neck-hips (o media de caderas)
+        if neck[2] > 0 and (hips[2] > 0 or (lhip[2] > 0 and rhip[2] > 0)):
+            hips_xy = hips[:2] if hips[2] > 0 else (lhip[:2] + rhip[:2]) / 2.0
+            scales.append(float(np.linalg.norm(neck[:2] - hips_xy)))
+        # respaldos: anchura de hombros / caderas (escalado a ~medio torso)
+        if lsh[2] > 0 and rsh[2] > 0:
+            scales.append(float(np.linalg.norm(lsh[:2] - rsh[:2]) * 0.5))
+        if lhip[2] > 0 and rhip[2] > 0:
+            scales.append(float(np.linalg.norm(lhip[:2] - rhip[:2]) * 0.5))
+        
+        if len(scales) == 0:
+            # Último respaldo: dispersión espacial de puntos válidos
+            std_xy = np.std(kps[valid_mask, :2], axis=0)
+            scale = float(np.linalg.norm(std_xy))
+        else:
+            # Mediana para robustez frente a outliers
+            scale = float(np.median(scales))
+        
+        # Evitar divisiones por cero o valores no finitos
+        if not np.isfinite(scale) or scale < 1e-6:
+            scale = 1.0
+        
+        # Aplicar escala solo a válidos; mantener confidencias intactas
+        normalized[valid_mask, 0] /= scale
+        normalized[valid_mask, 1] /= scale
+        
         return normalized
 
     def _adjust_keypoint_confidence(self, keypoints: np.ndarray, 
