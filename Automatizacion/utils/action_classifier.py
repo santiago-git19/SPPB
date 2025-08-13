@@ -575,10 +575,11 @@ class TRTPoseClassifier:
             #print("\n" + str(processed_keypoints) + "\n")
 
             # Normalizar coordenadas
-            normalized_keypoints = self._normalize_keypoints(processed_keypoints)
+            #normalized_keypoints = self._normalize_keypoints(processed_keypoints)
             
             # Añadir al buffer temporal
-            self.sequence_buffer.append(normalized_keypoints)
+            #self.sequence_buffer.append(normalized_keypoints)
+            self.sequence_buffer.append(processed_keypoints)
             
             #print(self.sequence_buffer)
 
