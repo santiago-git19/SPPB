@@ -382,7 +382,8 @@ class TRTPoseClassifier:
             target_keypoints[3] = (target_keypoints[0] + target_keypoints[6]) / 2.0  # torso = promedio de hips y neck
         
         logger.debug(f"🔄 MediaPipe->NVIDIA: {keypoints.shape} -> {target_keypoints.shape}")
-        
+        print("\n" + str(target_keypoints) + "\n")
+
         return target_keypoints
     
     def _filter_low_confidence_keypoints(self, keypoints: np.ndarray) -> np.ndarray:
