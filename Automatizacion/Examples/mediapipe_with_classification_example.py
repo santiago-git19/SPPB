@@ -688,6 +688,26 @@ class MediaPipeWithClassifier:
             validation_result['mapped_keypoints_count'] = mapped_count
             validation_result['unmapped_keypoints_count'] = unmapped_count
             
+            # Calcular keypoints deducidos (neck, hips, torso) usando el mismo algoritmo que action_classifier
+            # Calcular neck (índice 6) como promedio de hombros
+            left_shoulder = nvidia_keypoints[20]  # left_shoulder
+            right_shoulder = nvidia_keypoints[21]  # right_shoulder
+            if left_shoulder[2] > 0.1 and right_shoulder[2] > 0.1:
+                nvidia_keypoints[6] = (left_shoulder + right_shoulder) / 2.0  # neck = promedio hombros
+                print(f"[DEBUG] Neck calculado: {nvidia_keypoints[6]}")
+            
+            # Calcular hips (índice 0) como promedio de caderas  
+            left_hip = nvidia_keypoints[1]   # left_hip
+            right_hip = nvidia_keypoints[2]  # right_hip
+            if left_hip[2] > 0.1 and right_hip[2] > 0.1:
+                nvidia_keypoints[0] = (left_hip + right_hip) / 2.0  # hips = promedio de caderas
+                print(f"[DEBUG] Hips calculado: {nvidia_keypoints[0]}")
+            
+            # Calcular torso (índice 3) como promedio de hips y neck
+            if nvidia_keypoints[0][2] > 0.1 and nvidia_keypoints[6][2] > 0.1:
+                nvidia_keypoints[3] = (nvidia_keypoints[0] + nvidia_keypoints[6]) / 2.0  # torso = promedio de hips y neck
+                print(f"[DEBUG] Torso calculado: {nvidia_keypoints[3]}")
+            
             # Guardar para análisis posterior
             if self.validation_mode:
                 self.validation_data['mediapipe_keypoints_history'].append(mediapipe_keypoints.copy())
@@ -850,21 +870,59 @@ class MediaPipeWithClassifier:
                     if self.validation_mode:
                         cv2.putText(result_image, str(i), (int(x) + 8, int(y) - 8),
                                    cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1)
-            # Dibujar keypoints deducidos (hips, neck, torso) de NVIDIA
-            # Solo si hay historial de nvidia_keypoints
+            # Dibujar keypoints deducidos (hips, neck, torso) SIEMPRE cuando sea posible
+            # Primero intentar obtener desde validation_data
+            nvidia_kps = None
             if hasattr(self, 'validation_data') and self.validation_data.get('nvidia_keypoints_history'):
                 nvidia_kps = self.validation_data['nvidia_keypoints_history'][-1] if self.validation_data['nvidia_keypoints_history'] else None
-                if nvidia_kps is not None and nvidia_kps.shape[0] >= 7:
-                    deduced_indices = [(0, 'Hips'), (3, 'Torso'), (6, 'Neck')]
-                    for idx, label in deduced_indices:
-                        x, y, conf = nvidia_kps[idx]
-                        if conf > 0.1:
-                            # Magenta for deduced keypoints
-                            cv2.circle(result_image, (int(x), int(y)), 6, (255, 0, 255), -1)
-                            cv2.circle(result_image, (int(x), int(y)), 9, (0, 0, 0), 2)
-                            if self.validation_mode:
-                                cv2.putText(result_image, label, (int(x) + 10, int(y) - 10),
-                                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 255), 1)
+            
+            # Si no hay nvidia_keypoints en validación, calcular directamente
+            if nvidia_kps is None and mediapipe_keypoints is not None:
+                # Calcular keypoints deducidos directamente desde MediaPipe
+                mapping = self.pose_classifier.MEDIAPIPE_TO_NVIDIA_MAPPING
+                nvidia_kps = np.zeros((34, 3), dtype=np.float32)
+                
+                # Mapear keypoints básicos
+                for mp_idx, nvidia_idx in mapping.items():
+                    if nvidia_idx is not None and mp_idx < len(mediapipe_keypoints):
+                        nvidia_kps[nvidia_idx] = mediapipe_keypoints[mp_idx]
+                
+                # Calcular neck (índice 6) como promedio de hombros
+                left_shoulder = nvidia_kps[20] if len(nvidia_kps) > 20 else np.zeros(3)  # left_shoulder
+                right_shoulder = nvidia_kps[21] if len(nvidia_kps) > 21 else np.zeros(3)  # right_shoulder
+                if left_shoulder[2] > 0.1 and right_shoulder[2] > 0.1:
+                    nvidia_kps[6] = (left_shoulder + right_shoulder) / 2.0
+                
+                # Calcular hips (índice 0) como promedio de caderas
+                left_hip = nvidia_kps[1] if len(nvidia_kps) > 1 else np.zeros(3)  # left_hip
+                right_hip = nvidia_kps[2] if len(nvidia_kps) > 2 else np.zeros(3)  # right_hip
+                if left_hip[2] > 0.1 and right_hip[2] > 0.1:
+                    nvidia_kps[0] = (left_hip + right_hip) / 2.0
+                
+                # Calcular torso (índice 3) como promedio de hips y neck
+                if nvidia_kps[0][2] > 0.1 and nvidia_kps[6][2] > 0.1:
+                    nvidia_kps[3] = (nvidia_kps[0] + nvidia_kps[6]) / 2.0
+            
+            # Dibujar keypoints deducidos si están disponibles
+            if nvidia_kps is not None and nvidia_kps.shape[0] >= 7:
+                deduced_indices = [(0, 'Hips'), (3, 'Torso'), (6, 'Neck')]
+                for idx, label in deduced_indices:
+                    x, y, conf = nvidia_kps[idx]
+                    print(f"[DEBUG] {label}: x={x:.1f}, y={y:.1f}, conf={conf:.3f}")
+                    
+                    # Dibujar keypoint deducido (con umbral más bajo para asegurar visibilidad)
+                    if conf > 0.05 or (x > 0 and y > 0):  # Umbral más permisivo
+                        # Magenta for deduced keypoints
+                        cv2.circle(result_image, (int(x), int(y)), 8, (255, 0, 255), -1)
+                        cv2.circle(result_image, (int(x), int(y)), 12, (255, 255, 255), 2)
+                        # Siempre mostrar etiqueta
+                        cv2.putText(result_image, label, (int(x) + 15, int(y) - 15),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 2)
+                        print(f"[DEBUG] ✅ {label} dibujado en ({int(x)}, {int(y)})")
+                    else:
+                        print(f"[DEBUG] ❌ {label} no dibujado - confianza muy baja")
+            else:
+                print("[DEBUG] ❌ No hay nvidia_keypoints disponibles para dibujar")
             
             # Dibujar clasificación si está disponible
             if frame_result['pose_classifications']:
