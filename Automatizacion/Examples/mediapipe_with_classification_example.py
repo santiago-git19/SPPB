@@ -850,6 +850,21 @@ class MediaPipeWithClassifier:
                     if self.validation_mode:
                         cv2.putText(result_image, str(i), (int(x) + 8, int(y) - 8),
                                    cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1)
+            # Dibujar keypoints deducidos (hips, neck, torso) de NVIDIA
+            # Solo si hay historial de nvidia_keypoints
+            if hasattr(self, 'validation_data') and self.validation_data.get('nvidia_keypoints_history'):
+                nvidia_kps = self.validation_data['nvidia_keypoints_history'][-1] if self.validation_data['nvidia_keypoints_history'] else None
+                if nvidia_kps is not None and nvidia_kps.shape[0] >= 7:
+                    deduced_indices = [(0, 'Hips'), (3, 'Torso'), (6, 'Neck')]
+                    for idx, label in deduced_indices:
+                        x, y, conf = nvidia_kps[idx]
+                        if conf > 0.1:
+                            # Magenta for deduced keypoints
+                            cv2.circle(result_image, (int(x), int(y)), 6, (255, 0, 255), -1)
+                            cv2.circle(result_image, (int(x), int(y)), 9, (0, 0, 0), 2)
+                            if self.validation_mode:
+                                cv2.putText(result_image, label, (int(x) + 10, int(y) - 10),
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 255), 1)
             
             # Dibujar clasificación si está disponible
             if frame_result['pose_classifications']:
