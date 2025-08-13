@@ -83,42 +83,7 @@ class TRTPoseClassifier:
         17:  6    # neck -> 6
     }
     
-    MEDIAPIPE_TO_NVIDIA_MAPPING = {
-    0: 15,   # nose -> nose (15)
-    1: None, # right_eye_inner -> no equivalente
-    2: 17,   # right_eye -> right eye (17)
-    3: None, # right_eye_outer -> no equivalente
-    4: None, # left_eye_inner -> no equivalente
-    5: 16,   # left_eye -> left eye (16)
-    6: None, # left_eye_outer -> no equivalente
-    7: 19,   # right_ear -> right ear (19)
-    8: 18,   # left_ear -> left ear (18)
-    9: None, # mouth_right -> no equivalente
-    10: None,# mouth_left -> no equivalente
-    11: 21,  # right_shoulder -> right shoulder (21)
-    12: 20,  # left_shoulder -> left shoulder (20)
-    13: 23,  # right_elbow -> right elbow (23)
-    14: 22,  # left_elbow -> left elbow (22)
-    15: 25,  # right_wrist -> right wrist (25)
-    16: 24,  # left_wrist -> left wrist (24)
-    17: 27,  # right_pinky_knuckle -> right pinky knuckle (27)
-    18: 26,  # left_pinky_knuckle -> left pinky knuckle (26)
-    19: 31,  # right_index_knuckle -> right index knuckle (31)
-    20: 30,  # left_index_knuckle -> left index knuckle (30)
-    21: 33,  # right_thumb_knuckle -> right thumb tip (33)  (aprox., knuckle->tip)
-    22: 32,  # left_thumb_knuckle -> left thumb tip (32)   (aprox.)
-    23: 2,   # right_hip -> right hip (2)
-    24: 1,   # left_hip -> left hip (1)
-    25: 5,   # right_knee -> right knee (5)
-    26: 4,   # left_knee -> left knee (4)
-    27: 8,   # right_ankle -> right ankle (8)
-    28: 7,   # left_ankle -> left ankle (7)
-    29: 14,  # right_heel -> right heel (14)
-    30: 13,  # left_heel -> left heel (13)
-    31: 10,  # right_foot_index -> right big toe (10)
-    32: 9    # left_foot_index -> left big toe (9)
-}
-    '''
+    
     # Mapeo de keypoints MediaPipe (33) a NVIDIA (34)
     # Topología MediaPipe corregida según especificación oficial
     MEDIAPIPE_TO_NVIDIA_MAPPING = {
@@ -156,7 +121,6 @@ class TRTPoseClassifier:
         31: 9,   # left_foot_index -> left_big_toe (9) - CORREGIDO
         32: 10   # right_foot_index -> right_big_toe (10) - CORREGIDO
     }
-    '''
     
     def __init__(self, 
                  model_path: str,
