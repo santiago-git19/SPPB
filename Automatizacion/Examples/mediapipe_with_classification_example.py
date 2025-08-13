@@ -93,6 +93,8 @@ class PoseClassifierPython36:
         self._test_python36_availability()
         self._worker = None
         self._worker_lock = threading.Lock()
+        # Cola para capturar stdout (líneas JSON) sin bloquear
+        self._stdout_queue = queue.Queue(maxsize=500)
         if self._persistent:
             self._start_persistent_process()
  
@@ -259,7 +261,7 @@ except Exception as e:
             self._worker = subprocess.Popen(
                 ['python3.6', self.classifier_script, '--loop'],
                 stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,  # Cambiar a PIPE para leer stdout
+                stdout=subprocess.PIPE,  # mantenemos PIPE para procesar JSON
                 stderr=subprocess.PIPE,
                 text=True,
                 bufsize=1
@@ -267,20 +269,33 @@ except Exception as e:
             # Hilo para leer stderr y loguear (evita deadlocks)
             def _stderr_reader(proc):
                 for line in proc.stderr:
-                    line = line.rstrip()
+                    line = line.rstrip('\n')
                     if line:
-                        logger.debug(f"[CLF36] {line}")
+                        logger.debug(f"[CLF36 STDERR] {line}")
             threading.Thread(target=_stderr_reader, args=(self._worker,), daemon=True).start()
+
+            # Hilo para leer stdout y encolar JSON
+            def _stdout_reader(proc, out_queue):
+                for line in proc.stdout:
+                    line = line.rstrip('\n')
+                    if not line:
+                        continue
+                    # Mostrar siempre la línea capturada
+                    print(f"[PY36 RAW] {line}")
+                    # Intentar encolar (descartar si lleno para no bloquear)
+                    try:
+                        out_queue.put_nowait(line)
+                    except queue.Full:
+                        logger.warning("⚠️ Cola stdout del clasificador llena, descartando línea")
+            threading.Thread(target=_stdout_reader, args=(self._worker, self._stdout_queue), daemon=True).start()
 
             logger.info("✅ Clasificador persistente iniciado")
         except Exception as e:
             logger.error(f"❌ No se pudo iniciar proceso persistente: {e}")
             self._worker = None
- 
+    
     def process_keypoints(self, keypoints: np.ndarray) -> dict:
-        """
-        Procesa keypoints usando el clasificador en Python 3.6
-        """
+        """Procesa keypoints usando el clasificador en Python 3.6"""
         # Ruta optimizada si proceso persistente activo
         if self._persistent and self._worker and self._worker.stdin and self._worker.poll() is None:
             try:
@@ -290,18 +305,30 @@ except Exception as e:
                 with self._worker_lock:
                     self._worker.stdin.write(line + '\n')
                     self._worker.stdin.flush()
-                    # Leer respuesta (bloqueante). Se podría mejorar con timeout usando hilos.
-                    response = self._worker.stdout.readline()
+                # Esperar línea JSON desde la cola
+                response = None
+                timeout_s = 5.0
+                deadline = time.time() + timeout_s
+                while time.time() < deadline:
+                    try:
+                        raw_line = self._stdout_queue.get(timeout=0.5)
+                    except queue.Empty:
+                        continue
+                    # Primer línea disponible (en este worker siempre es JSON)
+                    response = raw_line
+                    break
                 rt_ms = (time.time() - t0) * 1000
-                #print(response + "-------------------------")
                 if not response:
-                    return {'error': True, 'message': 'Empty response from persistent worker'}
-                data = json.loads(response)
+                    return {'error': True, 'message': 'Timeout esperando respuesta del worker', 'rt_ms': rt_ms}
+                print(f"[PY36 RESPONSE] {response}")
+                try:
+                    data = json.loads(response)
+                except json.JSONDecodeError as je:
+                    return {'error': True, 'message': f'Respuesta no JSON: {response}', 'exception': str(je)}
                 if data.get('quit'):
                     return {'error': True, 'message': 'Worker terminating'}
                 if not data.get('success', False):
                     return {'error': True, 'message': data.get('error', 'Unknown'), 'traceback': data.get('traceback')}
-                #print("^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^")
                 classification_result = data.get('result')
                 if classification_result and not classification_result.get('error', False):
                     self.stats['total_predictions'] += 1
