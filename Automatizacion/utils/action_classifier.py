@@ -621,8 +621,9 @@ class TRTPoseClassifier:
             
             # Copiar resultado de GPU a CPU
             h_output = np.empty(self.output_shape, dtype=np.float32)
-            print(f"Salida cruda del modelo (h_output): {h_output}")
             cuda.memcpy_dtoh(h_output, self.d_output)
+            print(f"Salida cruda del modelo (h_output): {h_output}")
+
             
             inference_time = time.time() - start_time
             
