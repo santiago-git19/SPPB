@@ -405,7 +405,7 @@ class TRTPoseClassifier:
     
     def _normalize_keypoints(self, keypoints: np.ndarray) -> np.ndarray:
         """
-        Normaliza las coordenadas de keypoints entre -1 y 1
+        Normaliza las coordenadas de keypoints entre 0 y 100
 
         Args:
             keypoints: Array [num_keypoints, 3]
@@ -419,16 +419,9 @@ class TRTPoseClassifier:
         valid_mask = (keypoints[:, 0] != 0) | (keypoints[:, 1] != 0)
 
         if np.any(valid_mask):
-            valid_keypoints = keypoints[valid_mask]
-
-            # Normalizar coordenadas X e Y al rango [-1, 1]
-            min_x, max_x = np.min(valid_keypoints[:, 0]), np.max(valid_keypoints[:, 0])
-            min_y, max_y = np.min(valid_keypoints[:, 1]), np.max(valid_keypoints[:, 1])
-
-            if max_x > min_x:  # Evitar división por cero
-                normalized[valid_mask, 0] = 2 * (valid_keypoints[:, 0] - min_x) / (max_x - min_x) - 1
-            if max_y > min_y:
-                normalized[valid_mask, 1] = 2 * (valid_keypoints[:, 1] - min_y) / (max_y - min_y) - 1
+            # Normalizar coordenadas x e y al rango [0, 100]
+            normalized[valid_mask, 0] = (keypoints[valid_mask, 0] - np.min(keypoints[valid_mask, 0])) / (np.max(keypoints[valid_mask, 0]) - np.min(keypoints[valid_mask, 0])) * 100
+            normalized[valid_mask, 1] = (keypoints[valid_mask, 1] - np.min(keypoints[valid_mask, 1])) / (np.max(keypoints[valid_mask, 1]) - np.min(keypoints[valid_mask, 1])) * 100
 
         return normalized
 
@@ -610,8 +603,8 @@ class TRTPoseClassifier:
             input_tensor = np.ascontiguousarray(input_tensor.astype(np.float32))
             
             # Configurar NumPy para mostrar todo el tensor
-            np.set_printoptions(threshold=np.inf, linewidth=np.inf)
-            print("\n" + str(input_tensor) + "\n")
+            #np.set_printoptions(threshold=np.inf, linewidth=np.inf)
+            #print("\n" + str(input_tensor) + "\n")
 
             # Ejecutar inferencia TensorRT
             start_time = time.time()
