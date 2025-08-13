@@ -405,7 +405,7 @@ class TRTPoseClassifier:
     
     def _normalize_keypoints(self, keypoints: np.ndarray) -> np.ndarray:
         """
-        Normaliza las coordenadas de keypoints entre -1000 y 1000
+        Normaliza las coordenadas de keypoints entre 0 y 1000
 
         Args:
             keypoints: Array [num_keypoints, 3]
@@ -419,9 +419,9 @@ class TRTPoseClassifier:
         valid_mask = (keypoints[:, 0] != 0) | (keypoints[:, 1] != 0)
 
         if np.any(valid_mask):
-            # Normalizar coordenadas x e y al rango [-1000, 1000]
-            normalized[valid_mask, 0] = ((keypoints[valid_mask, 0] - np.min(keypoints[valid_mask, 0])) / (np.max(keypoints[valid_mask, 0]) - np.min(keypoints[valid_mask, 0])) * 2000) - 1000
-            normalized[valid_mask, 1] = ((keypoints[valid_mask, 1] - np.min(keypoints[valid_mask, 1])) / (np.max(keypoints[valid_mask, 1]) - np.min(keypoints[valid_mask, 1])) * 2000) - 1000
+            # Normalizar coordenadas x e y al rango [0, 1000]
+            normalized[valid_mask, 0] = ((keypoints[valid_mask, 0] - np.min(keypoints[valid_mask, 0])) / (np.max(keypoints[valid_mask, 0]) - np.min(keypoints[valid_mask, 0])) * 1000)
+            normalized[valid_mask, 1] = ((keypoints[valid_mask, 1] - np.min(keypoints[valid_mask, 1])) / (np.max(keypoints[valid_mask, 1]) - np.min(keypoints[valid_mask, 1])) * 1000)
 
         return normalized
 
