@@ -614,7 +614,9 @@ class TRTPoseClassifier:
             
             # Copiar datos a GPU
             cuda.memcpy_htod(self.d_input, input_tensor)
-            
+
+            print("\n" + str(self.d_input) + "\n")
+
             # Ejecutar inferencia
             bindings = [int(self.d_input), int(self.d_output)]
             self.context.execute_v2(bindings)
