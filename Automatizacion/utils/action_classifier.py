@@ -406,9 +406,11 @@ class TRTPoseClassifier:
     def _normalize_keypoints(self, keypoints: np.ndarray) -> np.ndarray:
         """
         Normaliza coordenadas centrando en pelvis/caderas y escalando por tamaño de torso.
-        - Centro: joint raíz (hips, idx 0). Fallbacks: media de caderas (1,2), neck (6), media de válidos.
-        - Escala: mediana de distancias: hombro-cadera (izq/der), neck-hips, y respaldos (anchos hombros/caderas).
-        Solo se aplican transformaciones sobre keypoints válidos (conf > 0); los no válidos permanecen en (0,0,0).
+        Luego, ajusta el resultado final al rango [-1, 1] con un escalado max-abs global.
+        - Centro: hips (idx 0). Fallbacks: media de caderas (1,2), neck (6), media de válidos.
+        - Escala: mediana de distancias (hombro-cadera izq/der, neck-hips) con respaldos.
+        - Rango final: [-1, 1] en x e y.
+        Solo se transforman puntos válidos (conf > 0); los inválidos quedan en (0,0,0).
         """
         normalized = keypoints.copy()
         
@@ -484,6 +486,17 @@ class TRTPoseClassifier:
         # Aplicar escala solo a válidos; mantener confidencias intactas
         normalized[valid_mask, 0] /= scale
         normalized[valid_mask, 1] /= scale
+        
+        # Escala final a [-1, 1] por max-abs global
+        x_valid = normalized[valid_mask, 0]
+        y_valid = normalized[valid_mask, 1]
+        max_abs = float(max(np.max(np.abs(x_valid)), np.max(np.abs(y_valid))))
+        if np.isfinite(max_abs) and max_abs > 0:
+            normalized[valid_mask, 0] /= max_abs
+            normalized[valid_mask, 1] /= max_abs
+        
+        normalized[valid_mask, 0] = np.clip(normalized[valid_mask, 0], -1.0, 1.0)
+        normalized[valid_mask, 1] = np.clip(normalized[valid_mask, 1], -1.0, 1.0)
         
         return normalized
 
