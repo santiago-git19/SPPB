@@ -517,7 +517,7 @@ class MediaPipeWithClassifier:
         logger.info("🔧 Inicializando clasificador de poses (Python 3.6 subprocess)...")
         self.pose_classifier = PoseClassifierPython36(
             model_path=pose_classifier_model_path,
-            sequence_length=50,  # Secuencia más larga para pruebas
+            sequence_length=300,  # Secuencia más larga para pruebas
             confidence_threshold=0.05,  # Umbral más bajo
             persistent=True
         )
@@ -1157,7 +1157,7 @@ def main():
     config = {
         'mediapipe_model': '../models/pose_landmarker_lite.task',
         'pose_classifier_model': '../models/pose_classification/st-gcn_3dbp_nvidia.engine',
-        'video_source': '../Videos/Entrada/75995-557395099.mp4',  # 0 para cámara
+        'video_source': '../Videos/Entrada/WIN_20250702_12_09_08_Pro.mp4',  # 0 para cámara
         'output_video': '../Videos/Salida/mediapipe_validation_output.mp4'  # None para no guardar
     }
     
