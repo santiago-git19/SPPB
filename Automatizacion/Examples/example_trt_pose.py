@@ -52,7 +52,7 @@ def main():
         fps = 15  # Limitar FPS
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+        #out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
         
         print(f"Procesando video: {video_path}")
         print(f"Resolución: {width}x{height}")
@@ -88,9 +88,8 @@ def main():
                 # Procesar frame para extraer keypoints
                 keypoints = processor.process_frame(frame)
 
-                # Visualizar keypoints y exoesqueleto
+                # Solo mostrar información en consola (no visualizar)
                 if keypoints is not None:
-                    frame = processor.visualize_keypoints(frame, keypoints, draw_skeleton=True)
                     print(f"Frame {frame_count}: {len(keypoints)} keypoints detectados")
                 else:
                     print(f"Frame {frame_count}: No se detectaron keypoints")
@@ -108,14 +107,14 @@ def main():
                     fps_processed = processed_since_start / elapsed_time if elapsed_time > 0 else 0
                     fps_log.write(f"{frame_count},{fps_processed:.2f}\n")
 
-                # Añadir información al frame
+                # Añadir información al frame (solo texto, sin keypoints dibujados)
                 cv2.putText(frame, f"Frame: {frame_count}", (10, 30), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
                 cv2.putText(frame, f"Keypoints: {len(keypoints) if keypoints is not None else 0}", 
                            (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
-                # Guardar frame procesado
-                out.write(frame)
+                # Guardar frame procesado (sin visualización de keypoints)
+                #out.write(frame)
 
                 frame_count += 1
 
@@ -125,7 +124,7 @@ def main():
         
         # Cleanup
         cap.release()
-        out.release()
+        #out.release()
         cv2.destroyAllWindows()
         
         print("\n=== Procesamiento Completado ===")
