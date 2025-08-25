@@ -22,7 +22,7 @@ def main():
         return
     
     # Ruta del video a procesar
-    video_path = "WIN_20250702_12_09_08_Pro.mp4"  # Ajusta esta ruta
+    video_path = "../Videos/Entrada/171363-845439621_small.mp4"  # Ajusta esta ruta
     
     # Verificar que el video existe
     if not os.path.exists(video_path):
@@ -59,49 +59,57 @@ def main():
         prev_time = 0
         frame_interval = 1.0 / fps
         
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                print("Fin del video.")
-                break
-            
-            # Controlar FPS
-            current_time = time.time()
-            if current_time - prev_time < frame_interval:
-                continue
-            prev_time = current_time
-            
-            # Procesar frame para extraer keypoints
-            keypoints = processor.process_frame(frame)
-            
-            # Visualizar keypoints y exoesqueleto
-            if keypoints is not None:
-                frame = processor.visualize_keypoints(frame, keypoints, draw_skeleton=True)
-                print(f"Frame {frame_count}: {len(keypoints)} keypoints detectados")
-            else:
-                print(f"Frame {frame_count}: No se detectaron keypoints")
-            
-            # Añadir información al frame
-            cv2.putText(frame, f"Frame: {frame_count}", (10, 30), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-            cv2.putText(frame, f"Keypoints: {len(keypoints) if keypoints is not None else 0}", 
-                       (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-            
-            # Guardar frame procesado
-            out.write(frame)
-            
-            # Mostrar frame
-            cv2.imshow('TensorRT Pose - Exoesqueleto', frame)
-            
-            # Salir con 'q'
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
-            
-            frame_count += 1
-            
-            # Mostrar progreso cada 30 frames
-            if frame_count % 30 == 0:
-                print(f"Procesados {frame_count} frames...")
+        # Variables para cálculo de FPS
+        start_time = time.time()
+
+        # Crear archivo para guardar los FPS
+        fps_log_path = "fps_log.txt"
+        with open(fps_log_path, "w") as fps_log:
+            fps_log.write("Frame,FPS\n")
+
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    print("Fin del video.")
+                    break
+
+                # Controlar FPS
+                current_time = time.time()
+                if current_time - prev_time < frame_interval:
+                    continue
+                prev_time = current_time
+
+                # Procesar frame para extraer keypoints
+                keypoints = processor.process_frame(frame)
+
+                # Visualizar keypoints y exoesqueleto
+                if keypoints is not None:
+                    frame = processor.visualize_keypoints(frame, keypoints, draw_skeleton=True)
+                    print(f"Frame {frame_count}: {len(keypoints)} keypoints detectados")
+                else:
+                    print(f"Frame {frame_count}: No se detectaron keypoints")
+
+                # Calcular FPS
+                elapsed_time = time.time() - start_time
+                fps_processed = frame_count / elapsed_time if elapsed_time > 0 else 0
+
+                # Guardar FPS en el archivo
+                fps_log.write(f"{frame_count},{fps_processed:.2f}\n")
+
+                # Añadir información al frame
+                cv2.putText(frame, f"Frame: {frame_count}", (10, 30), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                cv2.putText(frame, f"Keypoints: {len(keypoints) if keypoints is not None else 0}", 
+                           (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+
+                # Guardar frame procesado
+                out.write(frame)
+
+                frame_count += 1
+
+                # Mostrar progreso cada 30 frames
+                if frame_count % 30 == 0:
+                    print(f"Procesados {frame_count} frames...")
         
         # Cleanup
         cap.release()
