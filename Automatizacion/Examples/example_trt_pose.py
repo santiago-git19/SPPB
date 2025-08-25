@@ -63,8 +63,10 @@ def main():
         prev_time = 0
         frame_interval = 1.0 / fps
         
-        # Variables para cálculo de FPS
-        start_time = time.time()
+        # Variables para cálculo de FPS (warmup)
+        warmup_frames = 30
+        start_time = None
+        processed_since_start = 0
 
         # Crear archivo para guardar los FPS
         fps_log_path = "fps_log.txt"
@@ -93,12 +95,18 @@ def main():
                 else:
                     print(f"Frame {frame_count}: No se detectaron keypoints")
 
-                # Calcular FPS
-                elapsed_time = time.time() - start_time
-                fps_processed = frame_count / elapsed_time if elapsed_time > 0 else 0
-
-                # Guardar FPS en el archivo
-                fps_log.write(f"{frame_count},{fps_processed:.2f}\n")
+                # Calcular FPS después del warmup
+                if start_time is None:
+                    if frame_count >= warmup_frames:
+                        start_time = time.time()
+                        processed_since_start = 0
+                        print(f"Iniciando cálculo de FPS después del frame {warmup_frames}")
+                    fps_log.write(f"{frame_count},0.00\n")  # Durante warmup, FPS = 0
+                else:
+                    processed_since_start += 1
+                    elapsed_time = time.time() - start_time
+                    fps_processed = processed_since_start / elapsed_time if elapsed_time > 0 else 0
+                    fps_log.write(f"{frame_count},{fps_processed:.2f}\n")
 
                 # Añadir información al frame
                 cv2.putText(frame, f"Frame: {frame_count}", (10, 30), 
