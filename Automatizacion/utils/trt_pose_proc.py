@@ -428,9 +428,10 @@ class TRTPoseProcessor:
                 # Escalar las coordenadas correctamente
                 x_scaled = int(x * scale_x)
                 y_scaled = int(y * scale_y)
-                if i < len(keypoints):
+                keypoints.append((x_scaled, y_scaled, confidence, i))
+
+                #if i < len(keypoints):
                     #keypoints[i]= [x_scaled, y_scaled, confidence]
-                    keypoints.append((x_scaled, y_scaled, confidence, i))
 
                 
         
