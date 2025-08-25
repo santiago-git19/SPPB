@@ -407,7 +407,8 @@ class TRTPoseProcessor:
         scale_y = height / cmap_height
         
         # Inicializar keypoints con ceros
-        keypoints = np.zeros((self.num_parts, 3), dtype=np.float32)  # (num_keypoints, 3)
+        #keypoints = np.zeros((self.num_parts, 3), dtype=np.float32)  # (num_keypoints, 3)
+        keypoints = []
         
         # Umbral para detección de keypoints
         threshold = 0.1
