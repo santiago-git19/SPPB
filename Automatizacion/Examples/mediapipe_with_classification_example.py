@@ -517,7 +517,7 @@ class MediaPipeWithClassifier:
         logger.info("🔧 Inicializando clasificador de poses (Python 3.6 subprocess)...")
         self.pose_classifier = PoseClassifierPython36(
             model_path=pose_classifier_model_path,
-            sequence_length=20,  # Secuencia más larga para pruebas
+            sequence_length=60,  # Secuencia más larga para pruebas
             confidence_threshold=0.05,  # Umbral más bajo
             persistent=True
         )
@@ -1003,9 +1003,9 @@ class MediaPipeWithClassifier:
         
         logger.info("🎥 Iniciando procesamiento MediaPipe + Validación + Clasificación (headless)...")
         
-        # Control de FPS: procesar solo 5 fps saltando frames
+        # Control de FPS: procesar solo 15 fps saltando frames
         input_fps = int(cap.get(cv2.CAP_PROP_FPS)) or 30
-        target_fps = 5
+        target_fps = 15
         frame_skip = max(1, input_fps // target_fps)  # saltar cada N frames
         frame_counter = 0
         
