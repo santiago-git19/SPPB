@@ -43,8 +43,6 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 # Importar la interfaz y los procesadores
 from utils.pose_detection.pose_detection import PoseDetection
-from utils.pose_detection.mediapipe_pose_proc import MediaPipeTasksPoseProcessor
-from utils.pose_detection.trt_pose_proc import TRTPoseProcessor
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -103,6 +101,7 @@ class PoseDetectionRunner:
     def _initialize_pose_processor(self) -> PoseDetection:
         """Inicializa el procesador de poses según el tipo especificado"""
         if self.model_type.lower() == 'mediapipe':
+            from utils.pose_detection.mediapipe_pose_proc import MediaPipeTasksPoseProcessor
             # Configurar rutas para MediaPipe
             model_path = Path(__file__).parent.parent / "models" / "pose_landmarker_lite.task"
             return MediaPipeTasksPoseProcessor(
@@ -112,6 +111,7 @@ class PoseDetectionRunner:
             )
         
         elif self.model_type.lower() == 'trt_pose':
+            from utils.pose_detection.trt_pose_proc import TRTPoseProcessor
             # Configurar rutas para TensorRT Pose
             model_path = Path(__file__).parent.parent / "models" / "resnet18_baseline_att_224x224_A_epoch_249.pth"
             topology_path = Path(__file__).parent.parent / "models" / "human_pose.json"
