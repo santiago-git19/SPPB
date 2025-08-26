@@ -1,0 +1,11 @@
+# Ignorar carpetas de compilación
+__pycache__/
+*.pyc
+
+# Ignorar entornos virtuales
+venv/
+.env/
+
+# Ignorar archivos de configuración locales
+.vscode/
+.idea/

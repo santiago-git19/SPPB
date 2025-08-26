@@ -39,7 +39,7 @@ import queue
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 # Importar solo MediaPipe Tasks (Python 3.9)
-from utils.prueba import MediaPipeTasksPoseProcessor
+from Automatizacion.utils.pose_detection.mediapipe_pose_proc import MediaPipeTasksPoseProcessor
 
 # Configurar logging más detallado para debugging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')

@@ -22,6 +22,8 @@ from typing import Optional, Tuple, List
 import logging
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
+from .pose_detection import PoseDetection
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -41,7 +43,7 @@ except ImportError as e:
     logger.warning(f"⚠️ MediaPipe no disponible: {e}")
     logger.warning("💡 Para usar esta clase, instale MediaPipe: pip install mediapipe")
 
-class MediaPipeTasksPoseProcessor:
+class MediaPipeTasksPoseProcessor(PoseDetection):
     """
     Procesador de poses usando MediaPipe Tasks con modelo .task
     
@@ -151,21 +153,21 @@ class MediaPipeTasksPoseProcessor:
         self.detector = None
         
         # Cargar modelo MediaPipe Tasks
-        self._load_mediapipe_model()
-        
+        self.load_model(model_path)
+
         logger.info("✅ MediaPipe Tasks Pose Processor inicializado correctamente")
         logger.info(f"   📁 Modelo: {os.path.basename(model_path)}")
         logger.info(f"   🎯 Confianza: {confidence_threshold}")
-        
-    def _load_mediapipe_model(self):
+
+    def load_model(self, model_path: str) -> None:
         """Carga el modelo MediaPipe Tasks .task"""
         try:
             # Verificar que el archivo existe
-            if not os.path.exists(self.model_path):
-                raise FileNotFoundError(f"Modelo no encontrado: {self.model_path}")
+            if not os.path.exists(model_path):
+                raise FileNotFoundError(f"Modelo no encontrado: {model_path}")
             
             # Crear detector MediaPipe Tasks
-            base_options = python.BaseOptions(model_asset_path=self.model_path)
+            base_options = python.BaseOptions(model_asset_path=model_path)
             options = vision.PoseLandmarkerOptions(
                 base_options=base_options,
                 output_segmentation_masks=self.output_segmentation_masks
@@ -737,3 +739,32 @@ if __name__ == "__main__":
     print("   from prueba import MediaPipeTasksPoseProcessor")
     print("   processor = MediaPipeTasksPoseProcessor('../models/pose_landmarker_lite.task')")
     print("   keypoints = processor.process_frame(frame)  # [33, 3] array")
+
+
+    def process_frames(self, frames: List[np.ndarray]) -> List[Optional[np.ndarray]]:
+        """
+        Procesa múltiples frames en paralelo utilizando ThreadPoolExecutor.
+
+        Args:
+            frames: Lista de frames en formato BGR.
+
+        Returns:
+            Lista de arrays de keypoints [33, 3] para cada frame, o None si no se detectaron poses.
+        """
+        def process_single_frame(frame: np.ndarray) -> Optional[np.ndarray]:
+            """Procesa un único frame usando el método process_frame."""
+            return self.process_frame(frame)
+
+        # Usar ThreadPoolExecutor para procesar los frames en paralelo
+        with ThreadPoolExecutor() as executor:
+            results = list(executor.map(process_single_frame, frames))
+
+        return results
+    
+    def visualize_keypoints(self, frame: np.ndarray, keypoints: Optional[np.ndarray]) -> np.ndarray:
+        """Implementación del método de visualización de la interfaz"""
+        return visualize_keypoints(frame, keypoints)
+
+    def topology(self) -> Tuple[List[str], List[Tuple[int, int]]]:
+        """Devuelve los nombres de keypoints y conexiones del esqueleto"""
+        return self.KEYPOINT_NAMES.copy(), self.POSE_CONNECTIONS.copy()
