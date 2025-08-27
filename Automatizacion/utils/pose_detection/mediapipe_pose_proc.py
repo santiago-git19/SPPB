@@ -483,6 +483,36 @@ class MediaPipeTasksPoseProcessor(PoseDetection):
     
     def __repr__(self) -> str:
         return self.__str__()
+    
+    def visualize_keypoints(self, frame: np.ndarray, keypoints: Optional[np.ndarray]) -> np.ndarray:
+        """Implementación del método de visualización de la interfaz"""
+        return visualize_keypoints(frame, keypoints)
+
+    def topology(self) -> Tuple[List[str], List[Tuple[int, int]]]:
+        """Devuelve los nombres de keypoints y conexiones del esqueleto"""
+        return self.KEYPOINT_NAMES.copy(), self.POSE_CONNECTIONS.copy()
+    
+    def process_frames(self, frames: List[np.ndarray]) -> List[Optional[np.ndarray]]:
+        """
+        Procesa múltiples frames en paralelo utilizando ThreadPoolExecutor.
+
+        Args:
+            frames: Lista de frames en formato BGR.
+
+        Returns:
+            Lista de arrays de keypoints [33, 3] para cada frame, o None si no se detectaron poses.
+        """
+        def process_single_frame(frame: np.ndarray) -> Optional[np.ndarray]:
+            """Procesa un único frame usando el método process_frame."""
+            return self.process_frame(frame)
+
+        # Usar ThreadPoolExecutor para procesar los frames en paralelo
+        with ThreadPoolExecutor() as executor:
+            results = list(executor.map(process_single_frame, frames))
+
+        return results
+    
+    
 
 
 # Ejemplo de uso
@@ -741,30 +771,4 @@ if __name__ == "__main__":
     print("   keypoints = processor.process_frame(frame)  # [33, 3] array")
 
 
-    def process_frames(self, frames: List[np.ndarray]) -> List[Optional[np.ndarray]]:
-        """
-        Procesa múltiples frames en paralelo utilizando ThreadPoolExecutor.
-
-        Args:
-            frames: Lista de frames en formato BGR.
-
-        Returns:
-            Lista de arrays de keypoints [33, 3] para cada frame, o None si no se detectaron poses.
-        """
-        def process_single_frame(frame: np.ndarray) -> Optional[np.ndarray]:
-            """Procesa un único frame usando el método process_frame."""
-            return self.process_frame(frame)
-
-        # Usar ThreadPoolExecutor para procesar los frames en paralelo
-        with ThreadPoolExecutor() as executor:
-            results = list(executor.map(process_single_frame, frames))
-
-        return results
     
-    def visualize_keypoints(self, frame: np.ndarray, keypoints: Optional[np.ndarray]) -> np.ndarray:
-        """Implementación del método de visualización de la interfaz"""
-        return visualize_keypoints(frame, keypoints)
-
-    def topology(self) -> Tuple[List[str], List[Tuple[int, int]]]:
-        """Devuelve los nombres de keypoints y conexiones del esqueleto"""
-        return self.KEYPOINT_NAMES.copy(), self.POSE_CONNECTIONS.copy()
