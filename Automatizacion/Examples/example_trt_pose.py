@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 # Añadir el directorio 'Automatizacion' al sys.path
 sys.path.append(str(Path(__file__).resolve().parent.parent))
-from utils.trt_pose_proc import TRTPoseProcessor
+from Automatizacion.utils.pose_detection.trt_pose_proc import TRTPoseProcessor
 import cv2
 import time
 import os

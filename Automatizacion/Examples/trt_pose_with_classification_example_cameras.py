@@ -31,7 +31,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 # Importar procesadores y cámaras
-from utils.trt_pose_proc import TRTPoseProcessor
+from Automatizacion.utils.pose_detection.trt_pose_proc import TRTPoseProcessor
 from Automatizacion.utils.action_classifier import TRTPoseClassifier, create_pose_classifier
 from utils.dual_orbbec_capture import DualOrbbecCapture
 

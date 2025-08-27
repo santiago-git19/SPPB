@@ -8,7 +8,7 @@ import sys
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 from ..utils.phase_base import PhaseBase, FullRestartRequested
-from utils.trt_pose_proc import TRTPoseProcessor
+from Automatizacion.utils.pose_detection.trt_pose_proc import TRTPoseProcessor
 from Automatizacion.utils.action_classifier import TRTPoseClassifier, create_pose_classifier
 
 class GaitSpeedPhase(PhaseBase):
