@@ -484,9 +484,9 @@ class MediaPipeTasksPoseProcessor(PoseDetection):
     def __repr__(self) -> str:
         return self.__str__()
     
-    def visualize_keypoints(self, frame: np.ndarray, keypoints: Optional[np.ndarray]) -> np.ndarray:
-        """Implementación del método de visualización de la interfaz"""
-        return visualize_keypoints(frame, keypoints)
+    #def visualize_keypoints(self, frame: np.ndarray, keypoints: Optional[np.ndarray]) -> np.ndarray:
+     #   """Implementación del método de visualización de la interfaz"""
+      #  return visualize_keypoints(frame, keypoints)
 
     def topology(self) -> Tuple[List[str], List[Tuple[int, int]]]:
         """Devuelve los nombres de keypoints y conexiones del esqueleto"""
