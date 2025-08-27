@@ -92,12 +92,12 @@ class PoseDetectionRunner:
         # Configurar writer de video si es necesario
         self.video_writer = self._setup_video_writer()
         
-    # logger.info(f"✅ PoseDetectionRunner inicializado")
-    # logger.info(f"   🔧 Modelo: {model_type}")
-    # logger.info(f"   📦 Batch size: {batch_size}")
-    # logger.info(f"   🎯 Target FPS: {target_fps}")
-    # logger.info(f"   📹 Fuente: {'Cámara' if video_path is None else video_path}")
-    
+        logger.info(f"✅ PoseDetectionRunner inicializado")
+        logger.info(f"   🔧 Modelo: {model_type}")
+        logger.info(f"   📦 Batch size: {batch_size}")
+        logger.info(f"   🎯 Target FPS: {target_fps}")
+        logger.info(f"   📹 Fuente: {'Cámara' if video_path is None else video_path}")
+
     def _initialize_pose_processor(self) -> PoseDetection:
         """Inicializa el procesador de poses según el tipo especificado"""
         if self.model_type.lower() == 'mediapipe':
@@ -131,12 +131,12 @@ class PoseDetectionRunner:
             cap = cv2.VideoCapture(self.video_path)
             if not cap.isOpened():
                 raise ValueError(f"No se pudo abrir el video: {self.video_path}")
-            # logger.info(f"📹 Video cargado: {self.video_path}")
+                logger.info(f"📹 Video cargado: {self.video_path}")
         else:
             cap = cv2.VideoCapture(self.camera_id)
             if not cap.isOpened():
                 raise ValueError(f"No se pudo abrir la cámara: {self.camera_id}")
-            # logger.info(f"📷 Cámara iniciada: {self.camera_id}")
+                logger.info(f"📷 Cámara iniciada: {self.camera_id}")
         
         return cap
     
