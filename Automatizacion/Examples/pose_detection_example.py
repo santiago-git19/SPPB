@@ -118,8 +118,6 @@ class PoseDetectionRunner:
             return TRTPoseProcessor(
                 model_path=str(model_path),
                 topology_path=str(topology_path),
-                confidence_threshold=0.3,
-                debug=self.debug
             )
         
         else:
