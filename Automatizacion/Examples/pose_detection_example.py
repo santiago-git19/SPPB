@@ -113,8 +113,8 @@ class PoseDetectionRunner:
         elif self.model_type.lower() == 'trt_pose':
             from utils.pose_detection.trt_pose_proc import TRTPoseProcessor
             # Configurar rutas para TensorRT Pose
-            model_path = Path(__file__).parent.parent / "models" / "resnet18_baseline_att_224x224_A_epoch_249.pth"
-            topology_path = Path(__file__).parent.parent / "models" / "human_pose.json"
+            model_path = "/home/mobilenet/Documentos/Trabajo/trt_pose/models/resnet18_baseline_att_224x224_A_epoch_249.pth"
+            topology_path = "/home/mobilenet/Documentos/Trabajo/trt_pose/models/human_pose.json"
             return TRTPoseProcessor(
                 model_path=str(model_path),
                 topology_path=str(topology_path),
