@@ -9,3 +9,6 @@ venv/
 # Ignorar archivos de configuración locales
 .vscode/
 .idea/
+
+# Ignorar la carpeta Videos
+Videos/
