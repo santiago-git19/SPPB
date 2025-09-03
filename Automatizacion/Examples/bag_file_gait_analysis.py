@@ -49,10 +49,11 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 # Importar módulos necesarios
 try:
-    from pyorbbecsdk import Pipeline, Config, Frame
-    from utils.gait_3d_tracker import Gait3DTracker
+# Imports del SDK de Orbbec: Ya no necesitamos Pipeline, Config, Frame
+# porque usamos BagOrbbecCapture que los abstrae
+    from Codigo.Automatizacion.utils.action_and_movement_detection.gait_3d_tracker import Gait3DTracker
     from utils.pose_detection.trt_pose_proc import TRTPoseProcessor
-    from utils.dual_orbbec_capture import DualOrbbecCapture
+    from utils.bag_orbbec_capture import BagOrbbecCapture
 except ImportError as e:
     print(f"Error importando módulos: {e}")
     print("Asegúrate de que pyorbbecsdk esté instalado y los módulos estén disponibles")
@@ -93,9 +94,13 @@ class BagFileGaitAnalyzer:
             logger.error(f"Error inicializando TRT Pose: {e}")
             raise ValueError("No se pudo inicializar el detector de poses")
         
-        # Inicializar tracker de marcha 3D
-        # Nota: Pasamos "bag_file" para dual_cam ya que usaremos datos del archivo .bag
-        self.gait_tracker = Gait3DTracker(dual_cam="bag_file", camera_side='left')
+        # Inicializar tracker de marcha 3D usando BagOrbbecCapture
+        self.bag_capture = BagOrbbecCapture(
+            bag_path="temp",  # Se configurará después
+            enable_depth=True,
+            auto_loop=False
+        )
+        self.gait_tracker = Gait3DTracker(capture_source=self.bag_capture)
         logger.info("Tracker de marcha 3D inicializado")
         
         # Estadísticas
@@ -120,48 +125,27 @@ class BagFileGaitAnalyzer:
         if not Path(bag_path).exists():
             raise ValueError(f"El archivo .bag no existe: {bag_path}")
         
-        # Inicializar pipeline de Orbbec
-        pipeline = Pipeline()
-        config = Config()
+        # Inicializar BagOrbbecCapture
+        bag_capture = BagOrbbecCapture(
+            bag_path=bag_path,
+            enable_depth=True,
+            auto_loop=False
+        )
         
-        try:
-            # Configurar para leer desde archivo .bag
-            config.enable_device_from_file(bag_path)
-            
-            # Habilitar streams de color y profundidad
-            # Nota: Ajusta la resolución según tu archivo .bag
-            config.enable_stream_profile(
-                stream_type="color",
-                format="RGB888",  # Formato RGB
-                width=640,
-                height=480,
-                fps=30
-            )
-            config.enable_stream_profile(
-                stream_type="depth", 
-                format="Y16",     # Formato de profundidad
-                width=640,
-                height=480,
-                fps=30
-            )
-            
-            # Iniciar el pipeline
-            pipeline.start(config)
-            logger.info(f"Pipeline iniciado para archivo: {bag_path}")
-            
-        except Exception as e:
-            logger.error(f"Error configurando pipeline: {e}")
-            raise
-        
-        # Estadísticas
-        start_time = time.time()
+        # Actualizar el tracker con la nueva fuente
+        self.gait_tracker = Gait3DTracker(capture_source=bag_capture)
         
         # Variables para el video de salida
         video_writer = None
         frame_width = 640
         frame_height = 480
         
+        # Estadísticas
+        start_time = time.time()
+        
         try:
+            logger.info(f"Procesando archivo: {bag_path}")
+            
             while True:
                 # Verificar límite de frames
                 if max_frames and self.processed_frames >= max_frames:
@@ -170,25 +154,17 @@ class BagFileGaitAnalyzer:
                 
                 frame_start_time = time.time()
                 
-                # Esperar por el siguiente frameset
-                try:
-                    frameset = pipeline.wait_for_frames(1000)  # Timeout de 1 segundo
-                    if not frameset:
-                        logger.info("No hay más frames disponibles")
-                        break
-                        
-                except Exception as e:
-                    logger.warning(f"Timeout esperando frames: {e}")
-                    break
+                # Leer frames usando BagOrbbecCapture
+                color_frame, depth_frame = bag_capture.read_frame_with_depth()
                 
+                if color_frame is None:
+                    logger.info("No hay más frames disponibles")
+                    break
+                    
                 self.frame_count += 1
                 
-                # Obtener frames de color y profundidad
-                color_frame = frameset.get_color_frame()
-                depth_frame = frameset.get_depth_frame()
-                
-                if color_frame is None or depth_frame is None:
-                    logger.warning(f"Frame {self.frame_count}: Falta frame de color o profundidad")
+                if depth_frame is None:
+                    logger.warning(f"Frame {self.frame_count}: Falta frame de profundidad")
                     continue
                 
                 # Procesar frame
@@ -219,8 +195,6 @@ class BagFileGaitAnalyzer:
                         avg_time = np.mean(self.processing_times[-30:])
                         logger.info(f"Procesados: {self.processed_frames} frames "
                                    f"(tiempo promedio: {avg_time:.3f}s/frame)")
-                
-                # No hay interrupción del usuario ya que no hay visualización
                         
         except KeyboardInterrupt:
             logger.info("Procesamiento interrumpido por el usuario")
@@ -230,7 +204,7 @@ class BagFileGaitAnalyzer:
             if video_writer is not None:
                 video_writer.release()
                 logger.info(f"Video guardado en: {output_video_path}")
-            pipeline.stop()
+            bag_capture.release()
         
         # Calcular estadísticas finales
         end_time = time.time()
@@ -243,30 +217,23 @@ class BagFileGaitAnalyzer:
         
         return results
         
-    def _process_frame_pair(self, color_frame: Frame, depth_frame: Frame) -> Tuple[bool, Optional[np.ndarray]]:
+    def _process_frame_pair(self, color_frame: np.ndarray, depth_frame: np.ndarray) -> Tuple[bool, Optional[np.ndarray]]:
         """
         Procesar un par de frames (color + profundidad) y generar frame visualizado.
         
         Args:
-            color_frame: Frame de color de Orbbec
-            depth_frame: Frame de profundidad de Orbbec
+            color_frame: Frame de color como numpy array BGR
+            depth_frame: Frame de profundidad como numpy array uint16
             
         Returns:
             Tuple[bool, Optional[np.ndarray]]: (éxito, frame_visualizado)
         """
         try:
-            # Convertir frame de color a formato OpenCV
-            color_image = color_frame.get_data()
-            color_image = np.frombuffer(color_image, dtype=np.uint8)
-            color_image = color_image.reshape((color_frame.get_height(), 
-                                              color_frame.get_width(), 3))
-            color_image = cv2.cvtColor(color_image, cv2.COLOR_RGB2BGR)
+            # El color_frame ya viene en formato BGR desde BagOrbbecCapture
+            color_image = color_frame
             
-            # Obtener datos de profundidad
-            depth_data = depth_frame.get_data()
-            depth_image = np.frombuffer(depth_data, dtype=np.uint16)
-            depth_image = depth_image.reshape((depth_frame.get_height(), 
-                                              depth_frame.get_width()))
+            # El depth_frame ya viene como numpy array uint16 desde BagOrbbecCapture
+            depth_image = depth_frame
             
             # Detectar poses usando TRT Pose
             keypoints = self.pose_processor.process_frame(color_image)
