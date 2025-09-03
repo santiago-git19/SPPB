@@ -35,11 +35,11 @@ from typing import List, Optional, Tuple, Any, Union
 import numpy as np
 
 try:
-    #from .dual_orbbec_capture import DualOrbbecCapture
+    from .dual_orbbec_capture import DualOrbbecCapture
     from .bag_orbbec_capture import BagOrbbecCapture
 except ImportError:
     try:
-        #from dual_orbbec_capture import DualOrbbecCapture
+        from dual_orbbec_capture import DualOrbbecCapture
         from bag_orbbec_capture import BagOrbbecCapture
     except ImportError:
         DualOrbbecCapture = None
