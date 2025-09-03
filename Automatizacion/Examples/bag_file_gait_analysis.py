@@ -40,6 +40,7 @@ import logging
 import numpy as np
 import sys
 import time
+import traceback
 from pathlib import Path
 from typing import List, Optional, Tuple, Dict
 from collections import defaultdict
@@ -94,14 +95,8 @@ class BagFileGaitAnalyzer:
             logger.error(f"Error inicializando TRT Pose: {e}")
             raise ValueError("No se pudo inicializar el detector de poses")
         
-        # Inicializar tracker de marcha 3D usando BagOrbbecCapture
-        self.bag_capture = BagOrbbecCapture(
-            bag_path="temp",  # Se configurará después
-            enable_depth=True,
-            auto_loop=False
-        )
-        self.gait_tracker = Gait3DTracker(capture_source=self.bag_capture)
-        logger.info("Tracker de marcha 3D inicializado")
+        # El tracker se inicializará en process_bag_file con el archivo .bag real
+        self.gait_tracker = None
         
         # Estadísticas
         self.frame_count = 0
