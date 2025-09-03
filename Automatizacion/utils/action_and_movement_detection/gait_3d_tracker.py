@@ -63,6 +63,13 @@ class Gait3DTracker:
     ) -> None:
         if dual_cam is None:
             raise ValueError("dual_cam no puede ser None y debe tener depth habilitado")
+        
+        # Permitir valor especial "bag_file" para procesamiento de archivos .bag
+        if dual_cam != "bag_file" and not hasattr(dual_cam, 'enable_depth'):
+            raise ValueError("dual_cam debe ser un objeto DualOrbbecCapture con depth habilitado o 'bag_file'")
+        
+        if dual_cam != "bag_file" and not dual_cam.enable_depth:
+            raise ValueError("dual_cam debe tener depth habilitado")
 
         self.dual_cam = dual_cam
         self.camera_side = camera_side
@@ -111,12 +118,63 @@ class Gait3DTracker:
 
     def _region_depth_mm(self, depth_frame: np.ndarray, x: int, y: int) -> Optional[float]:
         half = self.region // 2
+        
+        # Si estamos procesando un archivo .bag, usar métodos simples
+        if self.dual_cam == "bag_file":
+            return self._simple_region_depth(depth_frame, x, y)
+        
         stats = self.dual_cam.get_depth_statistics_in_region(depth_frame, x - half, y - half, self.region, self.region)
         if stats and stats.get('valid_pixels_percent', 0.0) >= self.min_valid_percent:
             # Usamos la mediana para robustez frente a outliers
             return float(stats.get('median', 0.0)) if stats.get('median', 0.0) > 0 else None
         # Fallback a un único píxel si la región no es suficientemente válida
         return self.dual_cam.get_distance_at_point(depth_frame, x, y)
+    
+    def _simple_region_depth(self, depth_frame: np.ndarray, x: int, y: int) -> Optional[float]:
+        """Método simple para obtener profundidad cuando se usa archivo .bag"""
+        try:
+            h, w = depth_frame.shape
+            half = self.region // 2
+            
+            # Asegurar que la región esté dentro de la imagen
+            x1 = max(0, x - half)
+            y1 = max(0, y - half)
+            x2 = min(w, x + half + 1)
+            y2 = min(h, y + half + 1)
+            
+            region = depth_frame[y1:y2, x1:x2]
+            valid_depths = region[region > 0]
+            
+            if len(valid_depths) >= len(region.flatten()) * 0.25:  # Al menos 25% de píxeles válidos
+                return float(np.median(valid_depths))
+            
+            # Fallback a píxel central
+            if 0 <= x < w and 0 <= y < h and depth_frame[y, x] > 0:
+                return float(depth_frame[y, x])
+                
+            return None
+        except Exception:
+            return None
+    
+    def _simple_3d_coordinates(self, depth_frame: np.ndarray, x: int, y: int, z_mm: float) -> Optional[Tuple[float, float, float]]:
+        """Método simple para convertir coordenadas 2D + profundidad a 3D cuando se usa archivo .bag"""
+        try:
+            # Parámetros intrínsecos aproximados para Orbbec Gemini 335Le
+            # Estos valores son aproximados y deberían calibrarse para mayor precisión
+            fx = 570.3  # Focal length en X
+            fy = 570.3  # Focal length en Y
+            cx = 320.0  # Centro óptico en X
+            cy = 240.0  # Centro óptico en Y
+            
+            # Convertir de píxeles a coordenadas 3D en mm
+            x_3d = (x - cx) * z_mm / fx
+            y_3d = (y - cy) * z_mm / fy
+            z_3d = z_mm
+            
+            return (x_3d, y_3d, z_3d)
+            
+        except Exception:
+            return None
 
     def update(
         self,
@@ -148,7 +206,12 @@ class Gait3DTracker:
             return None
 
         # 3) Coordenadas 3D en mm desde utilidades (basadas en el píxel)
-        xyz_mm_pix = self.dual_cam.get_3d_coordinates(depth_frame, x, y, self.camera_side)
+        if self.dual_cam == "bag_file":
+            # Para archivos .bag, usar conversión simple
+            xyz_mm_pix = self._simple_3d_coordinates(depth_frame, x, y, z_mm_region)
+        else:
+            xyz_mm_pix = self.dual_cam.get_3d_coordinates(depth_frame, x, y, self.camera_side)
+            
         if xyz_mm_pix is None:
             return None
 

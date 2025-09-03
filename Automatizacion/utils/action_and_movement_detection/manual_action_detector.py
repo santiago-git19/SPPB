@@ -13,11 +13,26 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 # Mapeo de nombres de keypoints según human_pose.json
+# Los keypoints están en orden desde índice 0 hasta 17
 KEYPOINT_NAMES = [
-    "nose", "left_eye", "right_eye", "left_ear", "right_ear", 
-    "left_shoulder", "right_shoulder", "left_elbow", "right_elbow", 
-    "left_wrist", "right_wrist", "left_hip", "right_hip", 
-    "left_knee", "right_knee", "left_ankle", "right_ankle", "neck"
+    "nose",           # 0
+    "left_eye",       # 1
+    "right_eye",      # 2
+    "left_ear",       # 3
+    "right_ear",      # 4
+    "left_shoulder",  # 5
+    "right_shoulder", # 6
+    "left_elbow",     # 7
+    "right_elbow",    # 8
+    "left_wrist",     # 9
+    "right_wrist",    # 10
+    "left_hip",       # 11
+    "right_hip",      # 12
+    "left_knee",      # 13
+    "right_knee",     # 14
+    "left_ankle",     # 15
+    "right_ankle",    # 16
+    "neck"            # 17
 ]
 
 # Índices de keypoints importantes
@@ -29,7 +44,7 @@ class PostureClassifier:
     usando keypoints de cámaras frontal y lateral.
     """
     
-    def __init__(self, confidence_threshold=0.5):
+    def __init__(self, confidence_threshold=0.01):
         """
         Inicializar el clasificador de postura.
         
@@ -67,9 +82,23 @@ class PostureClassifier:
         """
         logger.info("Iniciando clasificación de postura")
         
+        # Debug: mostrar keypoints recibidos
+        logger.debug(f"Keypoints frontales recibidos: {len(keypoints_frontal)} puntos")
+        for x, y, conf, idx in keypoints_frontal:
+            if idx < len(KEYPOINT_NAMES):
+                logger.debug(f"  {KEYPOINT_NAMES[idx]} ({idx}): ({x:.1f}, {y:.1f}) conf={conf:.3f}")
+        
+        logger.debug(f"Keypoints laterales recibidos: {len(keypoints_lateral)} puntos")
+        for x, y, conf, idx in keypoints_lateral:
+            if idx < len(KEYPOINT_NAMES):
+                logger.debug(f"  {KEYPOINT_NAMES[idx]} ({idx}): ({x:.1f}, {y:.1f}) conf={conf:.3f}")
+        
         # Convertir keypoints a diccionarios para facilitar el acceso
         frontal_kps = self._keypoints_to_dict(keypoints_frontal)
         lateral_kps = self._keypoints_to_dict(keypoints_lateral)
+        
+        logger.debug(f"Keypoints frontales válidos: {list(frontal_kps.keys())}")
+        logger.debug(f"Keypoints laterales válidos: {list(lateral_kps.keys())}")
         
         # Procesar keypoints de cada cámara
         frontal_result = self._process_frontal_keypoints(frontal_kps)
@@ -101,9 +130,22 @@ class PostureClassifier:
         """
         kp_dict = {}
         for x, y, confidence, idx in keypoints:
+            #print(self.confidence_threshold)
+            #print(confidence >= self.confidence_threshold)
             if confidence >= self.confidence_threshold and 0 <= idx < len(KEYPOINT_NAMES):
+                print("++++++++++++++++++++++++++++++++++++++++++")
                 keypoint_name = KEYPOINT_NAMES[idx]
                 kp_dict[keypoint_name] = (x, y, confidence)
+        
+        # Si no tenemos el keypoint "neck" pero sí los hombros, calcularlo
+        if 'neck' not in kp_dict and 'left_shoulder' in kp_dict and 'right_shoulder' in kp_dict:
+            left_shoulder = kp_dict['left_shoulder']
+            right_shoulder = kp_dict['right_shoulder']
+            neck_x = (left_shoulder[0] + right_shoulder[0]) / 2
+            neck_y = (left_shoulder[1] + right_shoulder[1]) / 2
+            neck_conf = min(left_shoulder[2], right_shoulder[2])  # Usar la menor confianza
+            kp_dict['neck'] = (neck_x, neck_y, neck_conf)
+            logger.debug("Calculado keypoint 'neck' como punto medio entre hombros")
         
         return kp_dict
     
@@ -226,6 +268,8 @@ class PostureClassifier:
         
         try:
             # Verificar keypoints requeridos
+            print("-----------------------------------------------------------")
+            print("hola" + str(keypoints))
             missing = [kp for kp in self.required_keypoints_lateral if kp not in keypoints]
             result['missing_keypoints'] = missing
             
@@ -412,7 +456,7 @@ class PostureClassifier:
 
 
 def classify_posture_simple(keypoints_frontal: List[Tuple], keypoints_lateral: List[Tuple], 
-                          confidence_threshold: float = 0.5) -> str:
+                          confidence_threshold: float = 0.01, debug: bool = False) -> str:
     """
     Función simple para clasificar postura sin detalles adicionales.
     
@@ -420,12 +464,24 @@ def classify_posture_simple(keypoints_frontal: List[Tuple], keypoints_lateral: L
         keypoints_frontal: Lista de keypoints de la cámara frontal
         keypoints_lateral: Lista de keypoints de la cámara lateral  
         confidence_threshold: Umbral de confianza mínimo
+        debug: Si True, muestra información detallada de debug
         
     Returns:
         str: 'de pie', 'sentado' o 'indeterminado'
     """
+    # Temporalmente cambiar nivel de logging si debug está activado
+    if debug:
+        logger.setLevel(logging.DEBUG)
+        logging.basicConfig(level=logging.DEBUG, 
+                          format='%(levelname)s - %(message)s')
+    
     classifier = PostureClassifier(confidence_threshold)
     result = classifier.classify_posture(keypoints_frontal, keypoints_lateral)
+    
+    # Restaurar nivel de logging
+    if debug:
+        logger.setLevel(logging.INFO)
+    
     return result['posture']
 
 

@@ -82,7 +82,7 @@ class VideoPoseClassifier:
     Procesador de video que combina detección de poses con clasificación de postura.
     """
     
-    def __init__(self, confidence_threshold=0.5, model_path=None, topology_path=None):
+    def __init__(self, confidence_threshold=0.01, model_path=None, topology_path=None):
         """
         Inicializar el procesador.
         
@@ -186,12 +186,12 @@ class VideoPoseClassifier:
                     writer.write(processed_frame)
                     
                 # Mostrar preview
-                if show_preview:
-                    cv2.imshow('Pose Classification', processed_frame)
-                    key = cv2.waitKey(1) & 0xFF
-                    if key == ord('q'):
-                        logger.info("Detenido por usuario")
-                        break
+                # if show_preview:
+                #     cv2.imshow('Pose Classification', processed_frame)
+                #     key = cv2.waitKey(1) & 0xFF
+                #     if key == ord('q'):
+                #         logger.info("Detenido por usuario")
+                #         break
                         
         finally:
             # Limpiar recursos
@@ -243,7 +243,7 @@ class VideoPoseClassifier:
             # Clasificar postura (usamos los mismos keypoints para ambas "cámaras")
             # En un caso real, tendrías keypoints de cámaras frontal y lateral
             posture_result = self.posture_classifier.classify_posture(
-                keypoints_frontal=keypoints,
+                keypoints_frontal=[],
                 keypoints_lateral=keypoints  # En este ejemplo usamos los mismos
             )
             
@@ -368,7 +368,7 @@ def main():
                        help='Ruta del video de entrada')
     parser.add_argument('--output', type=str, default=None,
                        help='Ruta del video de salida (opcional)')
-    parser.add_argument('--confidence', type=float, default=0.5,
+    parser.add_argument('--confidence', type=float, default=0.01,
                        help='Umbral de confianza para keypoints (default: 0.5)')
     parser.add_argument('--model', type=str, default=None,
                        help='Ruta al modelo TRT Pose (.pth)')
@@ -410,7 +410,7 @@ def main():
         print("\\nDistribución de posturas:")
         for posture, count in stats['posture_distribution'].items():
             percentage = (count / stats['processed_frames']) * 100
-            print(f"  {posture}: {count} frames ({percentage:.1f}%)")
+            print(f"  {posture}: {count} fra    mes ({percentage:.1f}%)")
         
         if args.output and stats['output_saved']:
             print(f"\\nVideo guardado en: {args.output}")
