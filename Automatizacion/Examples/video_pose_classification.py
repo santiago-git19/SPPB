@@ -95,7 +95,7 @@ class VideoPoseClassifier:
         
         # Paths por defecto si no se especifican
         if model_path is None:
-            model_path = "../models/pose_landmark_lite.onnx"  # Cambiar según tu modelo
+            model_path = "../models/resnet18_baseline_att_224x224_A_epoch_249.pth"  # Cambiar según tu modelo
         if topology_path is None:
             topology_path = "../models/human_pose.json"
         
