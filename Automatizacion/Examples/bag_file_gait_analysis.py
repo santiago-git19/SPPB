@@ -51,7 +51,7 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 try:
 # Imports del SDK de Orbbec: Ya no necesitamos Pipeline, Config, Frame
 # porque usamos BagOrbbecCapture que los abstrae
-    from Codigo.Automatizacion.utils.action_and_movement_detection.gait_3d_tracker import Gait3DTracker
+    from utils.action_and_movement_detection.gait_3d_tracker import Gait3DTracker
     from utils.pose_detection.trt_pose_proc import TRTPoseProcessor
     from utils.bag_orbbec_capture import BagOrbbecCapture
 except ImportError as e:
