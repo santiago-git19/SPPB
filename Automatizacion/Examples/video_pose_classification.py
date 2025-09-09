@@ -41,7 +41,7 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 # Importar módulos necesarios
 try:
-    from utils.manual_action_detector import PostureClassifier, KEYPOINT_NAMES
+    from Codigo.Automatizacion.utils.action_and_movement_detection.manual_action_detector import PostureClassifier, KEYPOINT_NAMES
     from utils.pose_detection.trt_pose_proc import TRTPoseProcessor
 except ImportError as e:
     print(f"Error importando módulos: {e}")

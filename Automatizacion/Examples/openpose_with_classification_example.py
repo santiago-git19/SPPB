@@ -35,7 +35,7 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 # Importar procesador de OpenPose y nuestro clasificador
 from Automatizacion.utils.pose_detection.openpose_proc import OpenPoseProcessor
-from Automatizacion.utils.action_classifier import TRTPoseClassifier, create_pose_classifier
+from Codigo.Automatizacion.utils.action_and_movement_detection.action_classifier import TRTPoseClassifier, create_pose_classifier
 
 
 # Configurar logging

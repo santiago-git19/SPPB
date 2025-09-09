@@ -1,7 +1,7 @@
 import logging
 from typing import Optional, Dict, Any
 from Automatizacion.utils.pose_detection.trt_pose_proc import TRTPoseProcessor
-from Automatizacion.utils.action_classifier import TRTPoseClassifier, create_pose_classifier
+from Codigo.Automatizacion.utils.action_and_movement_detection.action_classifier import TRTPoseClassifier, create_pose_classifier
 
 logger = logging.getLogger(__name__)
 

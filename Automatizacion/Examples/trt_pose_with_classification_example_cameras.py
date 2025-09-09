@@ -32,7 +32,7 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 # Importar procesadores y cámaras
 from Automatizacion.utils.pose_detection.trt_pose_proc import TRTPoseProcessor
-from Automatizacion.utils.action_classifier import TRTPoseClassifier, create_pose_classifier
+from Codigo.Automatizacion.utils.action_and_movement_detection.action_classifier import TRTPoseClassifier, create_pose_classifier
 from utils.dual_orbbec_capture import DualOrbbecCapture
 
 # Configurar logging

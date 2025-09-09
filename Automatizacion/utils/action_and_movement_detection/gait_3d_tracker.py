@@ -29,7 +29,7 @@ from typing import List, Optional, Tuple, Any
 import numpy as np
 
 try:
-    from .dual_orbbec_capture import DualOrbbecCapture
+    from ..dual_orbbec_capture import DualOrbbecCapture
 except Exception:  # pragma: no cover
     DualOrbbecCapture = None  # type: ignore
 
