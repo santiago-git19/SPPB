@@ -279,7 +279,7 @@ class TRTPoseProcessor(PoseDetection):
                     part_name = self.human_pose['keypoints'][part_id]
                     cv2.putText(output_frame, f"{part_name}:{confidence:.2f}", 
                                (int(x), int(y-15)), 
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.2, color, 0.7)
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.2, color, 1)
         
         # Dibujar esqueleto si se solicita
         if draw_skeleton and len(keypoints) > 0:
