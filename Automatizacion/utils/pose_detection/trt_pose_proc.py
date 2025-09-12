@@ -308,30 +308,30 @@ class TRTPoseProcessor(PoseDetection):
         # Conexiones mejoradas del esqueleto
         skeleton = [
             # Pierna izquierda
-            (16, 14),  # left_ankle -> left_knee
-            (14, 12),  # left_knee -> left_hip
+            (15, 13),  # left_ankle -> left_knee
+            (13, 11),  # left_knee -> left_hip
             # Pierna derecha
-            (17, 15),  # right_ankle -> right_knee
-            (15, 13),  # right_knee -> right_hip
+            (16, 14),  # right_ankle -> right_knee
+            (14, 12),  # right_knee -> right_hip
             # Caderas
-            (12, 13),  # left_hip -> right_hip
+            (11, 12),  # left_hip -> right_hip
             # Brazo izquierdo
-            (6, 8),    # left_shoulder -> left_elbow
-            (8, 10),   # left_elbow -> left_wrist
+            (5, 7),    # left_shoulder -> left_elbow
+            (7, 9),    # left_elbow -> left_wrist
             # Brazo derecho
-            (7, 9),    # right_shoulder -> right_elbow
-            (9, 11),   # right_elbow -> right_wrist
+            (6, 8),    # right_shoulder -> right_elbow
+            (8, 10),   # right_elbow -> right_wrist
             # Cabeza
-            (1, 2),    # nose -> left_eye
-            (1, 3),    # nose -> right_eye
-            (2, 4),    # left_eye -> left_ear
-            (3, 5),    # right_eye -> right_ear
+            (0, 1),    # nose -> left_eye
+            (0, 2),    # nose -> right_eye
+            (1, 3),    # left_eye -> left_ear
+            (2, 4),    # right_eye -> right_ear
             # Cuello y torso
-            (18, 1),   # neck -> nose
-            (18, 6),   # neck -> left_shoulder
-            (18, 7),   # neck -> right_shoulder
-            (18, 12),  # neck -> left_hip
-            (18, 13),  # neck -> right_hip
+            (17, 0),   # neck -> nose
+            (17, 5),   # neck -> left_shoulder
+            (17, 6),   # neck -> right_shoulder
+            (17, 11),  # neck -> left_hip
+            (17, 12),  # neck -> right_hip
         ]
     
         # Dibujar las conexiones
