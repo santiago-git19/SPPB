@@ -271,8 +271,8 @@ class TRTPoseProcessor(PoseDetection):
                 color = colors[part_id % len(colors)]
                 
                 # Dibujar círculo más grande para mejor visibilidad
-                cv2.circle(output_frame, (int(x), int(y)), 5, color, -1)
-                cv2.circle(output_frame, (int(x), int(y)), 7, (255, 255, 255), 2)
+                cv2.circle(output_frame, (int(x), int(y)), 2, color, -1)
+                cv2.circle(output_frame, (int(x), int(y)), 4, (255, 255, 255), 2)
                 
                 # Dibujar nombre de la parte (opcional)
                 if part_id < len(self.human_pose['keypoints']):
@@ -288,22 +288,59 @@ class TRTPoseProcessor(PoseDetection):
         return output_frame
     
     def _draw_skeleton(self, frame, keypoints):
-        """Dibuja las conexiones del esqueleto"""
-        # Crear diccionario de keypoints por parte
+        """
+        Dibuja las conexiones del esqueleto en el frame.
+    
+        Args:
+            frame: Frame donde se dibujará el esqueleto.
+            keypoints: Lista de keypoints detectados con formato [(x, y, conf, part_id), ...].
+    
+        Returns:
+            frame: Frame con las conexiones del esqueleto dibujadas.
+        """
+        # Crear un diccionario de keypoints válidos (confianza > 0.1)
         keypoint_dict = {}
         for keypoint in keypoints:
             x, y, confidence, part_id = keypoint
-            if confidence > 0.1:
+            if confidence > 0.1:  # Solo usar keypoints con confianza suficiente
                 keypoint_dict[part_id] = (int(x), int(y))
-        
-        # Dibujar conexiones según el esqueleto definido
-        for connection in self.human_pose['skeleton']:
-            part_a, part_b = connection
+    
+        # Conexiones mejoradas del esqueleto
+        skeleton = [
+            # Pierna izquierda
+            (16, 14),  # left_ankle -> left_knee
+            (14, 12),  # left_knee -> left_hip
+            # Pierna derecha
+            (17, 15),  # right_ankle -> right_knee
+            (15, 13),  # right_knee -> right_hip
+            # Caderas
+            (12, 13),  # left_hip -> right_hip
+            # Brazo izquierdo
+            (6, 8),    # left_shoulder -> left_elbow
+            (8, 10),   # left_elbow -> left_wrist
+            # Brazo derecho
+            (7, 9),    # right_shoulder -> right_elbow
+            (9, 11),   # right_elbow -> right_wrist
+            # Cabeza
+            (1, 2),    # nose -> left_eye
+            (1, 3),    # nose -> right_eye
+            (2, 4),    # left_eye -> left_ear
+            (3, 5),    # right_eye -> right_ear
+            # Cuello y torso
+            (18, 1),   # neck -> nose
+            (18, 6),   # neck -> left_shoulder
+            (18, 7),   # neck -> right_shoulder
+            (18, 12),  # neck -> left_hip
+            (18, 13),  # neck -> right_hip
+        ]
+    
+        # Dibujar las conexiones
+        for part_a, part_b in skeleton:
             if part_a in keypoint_dict and part_b in keypoint_dict:
                 point_a = keypoint_dict[part_a]
                 point_b = keypoint_dict[part_b]
-                cv2.line(frame, point_a, point_b, (0, 255, 0), 2)
-        
+                cv2.line(frame, point_a, point_b, (0, 255, 0), 2)  # Color verde, grosor 2
+    
         return frame
 
     def process_frames(self, frames: List[np.ndarray]) -> List[Optional[np.ndarray]]:
